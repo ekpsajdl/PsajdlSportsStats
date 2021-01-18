@@ -1,0 +1,622 @@
+This post will look specifically at penalty trends by day of the week and the week of the season. To look at trends by game environment, such as weather and turf type, see [NFL Penalty Trends - Game Environment](https://psajdlsportsstats.netlify.app).
+
+```{r import data, include=FALSE}
+# Here I imported local data from my computer.
+```
+``` {r import libraries, include = FALSE}
+library(data.table)
+library(dplyr)
+library(formattable)
+library(tidyverse)
+library(tidyr)
+library(ggplot2)
+library(plotly)
+library(reshape)
+library(gt)
+library(tibble)
+```
+## Game Day Trends
+``` {r join disc and game, include = FALSE}
+discipline <-  merge(discipline,game[,c("GameKey","Game_Day")],by="GameKey",all.x=TRUE)
+penalty <- merge(penalty,game[,c("GameKey","Game_Day","Week","Season_Type")],by="GameKey",all.x=TRUE)
+```
+To look at trends by the day of the week the game is played, we have to keep in mind there are exceedingly more games played on Sundays than any other day of the week. To control for this, I am going to determine how many games were played each day from 2013 - 2019. <br>
+``` {r, echo = FALSE}
+GD <- game %>% filter(Season_Type=="Reg")
+GD <- table(GD$Season,GD$Game_Day)
+GD <- GD[apply(GD[,-1], 1, function(x) !all(x==0)),]
+GD <- as.data.frame.matrix(GD)
+GD <- tibble::rownames_to_column(GD, "Season")
+GD <- GD %>% filter(Season>="2013")
+GD <- GD[-c(2:4,6,8,9,11,13:15)]
+
+GD %>% gt(rowname_col = "Season") %>% tab_header(title = md("**Game Count by Day of the Week**")) %>% cols_label("Monday"=md("**Monday**"),"Saturday"=md("**Saturday**"),"Sunday"=md("**Sunday**"),"Thursday"=md("**Thursday**")) %>%
+  summary_rows(
+    columns = vars(Monday,Saturday,Sunday,Thursday),
+    fns = list(
+      Total = "sum",
+      Average = "mean"),
+    decimals = 0
+  ) %>% 
+  tab_stubhead("Season") %>% tab_options(
+    grand_summary_row.background.color = "lightcyan"
+  ) %>%
+  tab_style(
+    style = list(
+    cell_fill(color = "darkslategray3"),
+    cell_text(color="white")),
+    locations = cells_column_labels(c(1:4))
+  ) %>%
+  tab_style(
+    style = list(
+      cell_fill(color="darkslategray3"),
+      cell_text(color="white", weight = "bold")),
+    locations = cells_stubhead()
+    ) %>% opt_row_striping() %>% opt_table_outline(style="solid",width = px(3),color="#D3D3D3") %>% tab_style(style = 
+    list(
+      cell_fill(color="white"),
+      cell_text(weight = "bold")
+    ),
+    locations = cells_stub(rows = TRUE)
+  )
+```
+
+Now we're able to take a quick look at the number of penalties per game by day of the week:
+
+``` {r, echo = FALSE, warning = FALSE}
+PD <- table(penalty$Season, penalty$Game_Day)
+PD <- PD[, colSums(PD != 0) > 0]
+PD <- as.data.frame.matrix(PD)
+PD <- tibble::rownames_to_column(PD, "Season")
+
+PD$Saturday[is.nan(PD$Saturday)]<-0
+
+PPD <- data.frame("Season"=c("2013","2014","2015","2016","2017","2018","2019"),"Monday"=PD$Monday/GD$Monday, "Saturday"=PD$Saturday/GD$Saturday,"Sunday"=PD$Sunday/GD$Sunday,"Thursday"=PD$Thursday/GD$Thursday)
+
+PPD$Saturday[is.nan(PPD$Saturday)]<-0
+
+PD <- rbind(PD,PPD)
+
+PD %>% gt(rowname_col = "Season") %>% tab_row_group(group = "Penalties per Game", rows = c(8:14))  %>% tab_row_group(group = "Total Penalties",rows=c(1:7))  %>% tab_header(md("**Penalties by Day of the Week**"),subtitle = md("*Regular* Season Only")) %>% fmt_number(columns=c(1:5), decimals = 2) %>% cols_move_to_start(columns = vars(Thursday,Sunday)) %>% opt_row_striping() %>% cols_label("Monday"=md("**Monday**"),"Saturday"=md("**Saturday**"),"Sunday"=md("**Sunday**"),"Thursday"=md("**Thursday**")) %>% tab_stubhead("Season") %>% tab_style(style = 
+    list(
+      cell_fill(color="white"),
+      cell_text(weight = "bold")
+    ),
+    locations = cells_stub(rows = TRUE)
+  ) %>% tab_style(style=list(cell_fill(color="darkslategray3"),cell_text(weight="bold",color="white",size="18")),locations=cells_stubhead()) %>%
+  tab_style(
+    style = list(
+    cell_fill(color = "darkslategray3"),
+    cell_text(color="white",size="18")),
+    locations = cells_column_labels(c(1:4))
+  ) %>%
+  tab_style(
+    style = list(
+      cell_fill(color = "lightcyan"),
+      cell_text(weight = "bold",size="18",align = "center")
+      ),
+    locations = cells_row_groups()) %>% summary_rows(groups = TRUE, fns = list(
+      Average = "mean")) %>% tab_style(style=list(cell_text(weight = "lighter")),locations = cells_summary()) %>% tab_options(summary_row.background.color = "lightyellow")
+
+# Reshape the data for ggplot
+melted20 <- melt(PPD, id="Season",variable_name = "Day")
+colnames(melted20)[2] <- "Day"
+colnames(melted20)[3] <- "Frequency"
+
+PenaltiesPGPerDay <- melted20 %>% ggplot(aes(x=`Day`, y=Frequency, fill=Season, color=Season, text=paste(
+  "<b>Penalties: </b>",format(Frequency,digits=3)
+))) + geom_col(position = "dodge") + ggtitle("Penalties Per Game by Day") + theme(legend.background = element_rect(color="#666666",fill = "white")) + labs(x="Day",y="Penalty Count") + scale_fill_manual(values=c("salmon2","cadetblue2","darkolivegreen3","goldenrod2","pink1","plum2","firebrick1")) + scale_color_manual(values=c("salmon4","cadetblue4","darkolivegreen4","goldenrod4","pink3","plum4","firebrick4"))
+ggplotly(PenaltiesPGPerDay, tooltip = "text") %>%
+  layout(title = list(text=paste0('<B>Penatlies Per Game by Day</B>',
+  '<br>',
+  '<sup>',
+  '<I>Regular Season Only</I>',
+  '</sup>')))
+```
+Monday night games see fewer penalties per game than games on other days of the week.There could be any number of reasons for this. <br>
+
+# Week of Season
+
+``` {r, warning = FALSE, echo = FALSE}
+PW <- table(penalty$Season, penalty$Week)
+PW <- as.data.frame.matrix(PW)
+PW <- tibble::rownames_to_column(PW, "Season")
+
+numberofgames <- game[which(game$Season_Type=="Reg"),]
+numberofgames <- table(numberofgames$Season,numberofgames$Week)
+numberofgames <- as.data.frame.matrix(numberofgames)
+numberofgames <- tibble::rownames_to_column(numberofgames,"Season")
+numberofgames <- numberofgames[which(numberofgames$Season>="2013"),]
+
+PWPG <- data.frame("Season"=as.character(c("2013","2014","2015","2016","2017","2018","2019")),"1"=PW$`1`/numberofgames$`1`,"2"=PW$`2`/numberofgames$`2`,"3"=PW$`3`/numberofgames$`3`,"4"=PW$`4`/numberofgames$`4`,"5"=PW$`5`/numberofgames$`5`,"6"=PW$`6`/numberofgames$`6`,"7"=PW$`7`/numberofgames$`7`,"8"=PW$`8`/numberofgames$`8`,"9"=PW$`9`/numberofgames$`9`,"10"=PW$`10`/numberofgames$`10`,"11"=PW$`11`/numberofgames$`11`,"12"=PW$`12`/numberofgames$`12`,"13"=PW$`13`/numberofgames$`13`,"14"=PW$`14`/numberofgames$`14`,"15"=PW$`15`/numberofgames$`15`,"16"=PW$`16`/numberofgames$`16`,"17"=PW$`17`/numberofgames$`17`,check.names = FALSE)
+
+PW <- rbind(PW,PWPG)
+
+PW %>% gt(rowname_col = "Season") %>% fmt_number(columns=c(1:18),decimals=2) %>% tab_row_group(group="Penalties Per Game", rows=c(8:14)) %>% tab_row_group(group="Total Penalties",rows=c(1:7)) %>% tab_header(md("**Penalties By Week of Season**"),subtitle = md("*Regular* Season Only")) %>% opt_row_striping() %>%   tab_style(
+    style = list(
+    cell_fill(color = "darkslategray3"),
+    cell_text(color="white",size="18",weight = "bold")),
+    locations = cells_column_labels(c(1:17))
+  ) %>% tab_style(style=list(cell_fill(color="darkslategray3"),cell_text(weight="bold",color="white",size="18")),locations=cells_stubhead()) %>%
+  tab_style(
+    style = list(
+      cell_fill(color = "lightcyan"),
+      cell_text(weight = "bold",align = "center")
+      ),
+    locations = cells_row_groups()) %>% tab_style(style = 
+    list(
+      cell_fill(color="white"),
+      cell_text(weight = "bold")
+    ),
+    locations = cells_stub(rows = TRUE)
+  )  %>% summary_rows(groups = TRUE, fns = list(
+      Average = "mean")) %>% tab_options(summary_row.background.color = "lightyellow")
+
+# Penalties
+
+penalty$Season <- as.character(penalty$Season)
+
+PenaltiesByWeek <- penalty %>% count(Week, Season) %>% add_count(Season, wt = n, name = "total") %>% ggplot(aes(x=Week,y=n, fill=Season, color = Season,group=1, text = paste(
+  "<b>Penalties: </b>",n,
+  "<br><b>% of Season's Penalties: </b>",format(n/total*100,digits = 2),"%")
+)) + geom_col() + scale_fill_manual(values=c("firebrick3","darkslategray3","lightsalmon1","darkseagreen3","cadetblue3","pink2","goldenrod2")) + scale_color_manual(values=c("firebrick4","darkslategray4","lightsalmon3","darkseagreen4","cadetblue4","pink4","goldenrod4")) + ggtitle("Penalties by Week",subtitle = "Split by Season (2013 - 2019)") + theme(plot.title = element_text(face="bold")) + labs(x="Week",y="Penalties") + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid")) + scale_x_continuous(breaks = 1:17)
+ggplotly(PenaltiesByWeek, tooltip="text") %>%
+  layout(title = list(text = paste0('<B>Penalties by Week</B>',
+                                    '<br>',
+                                    '<sup>',
+                                    '2013 - 2019 <I>Regular</I> Seasons -- If Split Evenly, Percentage would be ~5.8%',
+                                    '</sup>')))
+
+#Reshape the data for ggplot
+melted2 <- melt(PWPG,id="Season",variable.name = "Week")
+
+colnames(melted2)[2] <- "Week"
+colnames(melted2)[3] <- "Frequency"
+
+PenByWeekFreq <- ggplot(melted2,aes(x=Week, y=Frequency, group = Season, color = Season,text=paste(
+  "<b>Season: </b>",Season,
+  "<br><b>Week: </b>",Week,
+  "<br><b>Penalties Per Game: </b>",format(Frequency,digits=4)))) + geom_line() + ggtitle("Penalties by Week Per Game",subtitle="Decreases Over the Course of the Season In General") + theme(plot.title=element_text(face="bold")) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid")) + labs(x="Week",y="Penalty Count") + scale_color_manual(values = c("firebrick3","darkorange2","goldenrod2","darkgreen","cadetblue3","navy","plum4"))
+ggplotly(PenByWeekFreq, tooltip = "text") %>%
+  layout(title = list(text=paste0('<B>Penalties by Week <I>Per Game</I></B>',
+  '<br>',
+  '<sup>',
+  'Decreases Over the Course of the Season <I>In General</I>',
+  '</sup>')))
+```
+
+We can see that the number of penalties per games <i>generally</i> decreases over the course of the season, with a small increase in weeks 11 to 13. 
+
+``` {r merging, include = FALSE, warning = FALSE}
+playbyplay <- rbind(thirteen,fourteen)
+playbyplay <- rbind(playbyplay, fifteen)
+playbyplay <- rbind(playbyplay, sixteen)
+playbyplay <- rbind(playbyplay, seventeen)
+playbyplay <- rbind(playbyplay, eighteen)
+nineteen$AdjustForDST <- NULL
+nineteen$GMTOffSet <- NULL
+nineteen$GameKey.1 <- NULL
+playbyplay <- rbind(playbyplay, nineteen)
+
+penalty <- merge(penalty,playbyplay[,c("GameKey","HomeClubCode","VisitorClubCode","GameDate","Quarter","PossessionTeam","PlayType","SeriesNumber","PlayNumberInSeries","PlayNumberForTeam","GameClock","Down","Distance","FieldPosition","YardLine","PenaltyJerseyNumbers","PenaltyYards","HomeScore","VisitorScore","PlayID","Start_Time")],by=c("GameKey","PlayID"),all.x=TRUE)
+
+discipline <- merge(discipline,playbyplay[,c("GameKey","HomeClubCode","VisitorClubCode","GameDate","Quarter","PossessionTeam","PlayType","SeriesNumber","PlayNumberInSeries","PlayNumberForTeam","GameClock","Down","Distance","FieldPosition","YardLine","PenaltyJerseyNumbers","PenaltyYards","HomeScore","VisitorScore","PlayID","Start_Time")],by=c("GameKey","PlayID"),all.x=TRUE)
+
+# Make Score Differential Column
+penalty <- merge(penalty, playbyplay[,c("GameKey","PlayID","HomeScoreBeforePlay","VisitorScoreBeforePlay")],by=c("GameKey","PlayID"),all.x = TRUE)
+
+penalty <- penalty %>% mutate(
+  score.diff = ifelse(HomeScoreBeforePlay > VisitorScoreBeforePlay, 
+                      HomeScoreBeforePlay - VisitorScoreBeforePlay, 
+                      VisitorScoreBeforePlay - HomeScoreBeforePlay),
+  score.diff.cat = case_when(score.diff >= 17 ~ "3 Possessions or More",
+                             score.diff >= 9 ~ "2 Possessions",
+                             score.diff >= 4 ~ "1 Touchdown",
+                             score.diff > 0 ~ "Field Goal or Less",
+                             score.diff == 0 ~ "Tied"),
+  minute = as.numeric(substr(GameClock,1,2)),
+  second.clock = as.numeric(substr(GameClock,4,5)),
+  seconds.left = 15*60*(4-Quarter) + (60*minute) + second.clock)
+
+penalty$score.diff.cat <- factor(penalty$score.diff.cat,levels = c("3 Possessions or More", "2 Possessions", "1 Touchdown", "Field Goal or Less", "Tied"))
+```
+
+## Time
+
+So far, we have seen that penalties occur more earlier in the season and less on Monday nights. Now, let's look at penalties by start time.
+
+``` {r, echo = FALSE, warning = FALSE}
+# Start Time
+
+pentime <- table(penalty$Season, penalty$Start_Time)
+pentime <- as.data.frame.matrix(pentime)
+pentime <- tibble::rownames_to_column(pentime, "Season")
+
+# Early Afternoon 12:00-2:40 (13)
+pentime$EarlyAfternoon <- pentime$`12:00` + pentime$`12:05` + pentime$`12:30` + pentime$`13:00` + pentime$`13:05` + pentime$`13:25` + pentime$`13:30` + pentime$`13:35` + pentime$`14:00` + pentime$`14:05` + pentime$`14:25`+pentime$`14:30` + pentime$`14:40`
+
+# Mid Afternoon 3:00-5:40 (17)
+pentime$MidAfternoon <- pentime$`15:00` + pentime$`15:05` + pentime$`15:25` + pentime$`15:30` + pentime$`15:35` + pentime$`15:40` + pentime$`16:00` + pentime$`16:05` + pentime$`16:25` + pentime$`16:30` + pentime$`16:35` + pentime$`16:40` + pentime$`17:00` + pentime$`17:15` + pentime$`17:20` + pentime$`17:25` + pentime$`17:30` + pentime$`17:40`
+
+# Night Games 6:00 - 9:00 (23)
+pentime$Night <- pentime$`18:00` + pentime$`18:10` + pentime$`18:15` + pentime$`18:20` + pentime$`18:25` + pentime$`18:30` + pentime$`18:40` + pentime$`19:00` + pentime$`19:05` + pentime$`19:10` + pentime$`19:15` + pentime$`19:20` + pentime$`19:25` + pentime$`19:30` + pentime$`19:40` + pentime$`20:00` + pentime$`20:10` + pentime$`20:15` + pentime$`20:20` + pentime$`20:25` + pentime$`20:30` + pentime$`20:35` + pentime$`20:40`
+
+pentime <- pentime[,c("Season","EarlyAfternoon","MidAfternoon","Night")]
+```
+``` {r, include = FALSE}
+finestime <- discipline %>% filter(Season_Type=="Reg")
+finestime <- table(finestime$Season, finestime$Start_Time)
+finestime <- as.data.frame.matrix(finestime)
+finestime <- tibble::rownames_to_column(finestime,"Season")
+
+# Early Afternoon 12:00-2:40 (13)
+finestime$EarlyAfternoon <- finestime$`12:00` + finestime$`12:05` + finestime$`12:30` + finestime$`13:00` + finestime$`13:05` + finestime$`13:25` + finestime$`13:30` + finestime$`13:35` + finestime$`14:00` + finestime$`14:05` + finestime$`14:25`+finestime$`14:30` + finestime$`14:40`
+
+# Mid Afternoon 3:00-5:40 (17)
+finestime$MidAfternoon <- finestime$`15:00` + finestime$`15:05` + finestime$`15:25` + finestime$`15:30` + finestime$`15:35` + finestime$`15:40` + finestime$`16:00` + finestime$`16:05` + finestime$`16:25` + finestime$`16:30` + finestime$`16:35` + finestime$`16:40` + finestime$`17:00` + finestime$`17:15` + finestime$`17:20` + finestime$`17:25` + finestime$`17:30` + finestime$`17:40`
+
+# Night Games 6:00 - 9:00 (23)
+finestime$Night <- finestime$`18:00` + finestime$`18:10` + finestime$`18:15` + finestime$`18:20` + finestime$`18:25` + finestime$`18:30` + finestime$`18:40` + finestime$`19:00` + finestime$`19:05` + finestime$`19:10` + finestime$`19:15` + finestime$`19:20` + finestime$`19:25` + finestime$`19:30` + finestime$`19:40` + finestime$`20:00` + finestime$`20:10` + finestime$`20:15` + finestime$`20:20` + finestime$`20:25` + finestime$`20:30` + finestime$`20:35` + finestime$`20:40`
+
+finestime <- finestime[,c("Season","EarlyAfternoon","MidAfternoon","Night")]
+```
+``` {r, echo = FALSE, warning = FALSE}
+# Count of Game Times
+
+time <- game %>% filter(Season_Type=="Reg")
+time <- table(time$Season,time$Start_Time)
+time <- as.data.frame.matrix(time)
+time <- tibble::rownames_to_column(time, "Season")
+time <- time %>% filter(Season>="2013")
+
+# Early Afternoon 12:00-2:40 (13)
+time$EarlyAfternoon <- time$`12:00` + time$`12:05` + time$`12:30` + time$`13:00` + time$`13:05` + time$`13:25` + time$`13:30` + time$`13:35` + time$`14:00` + time$`14:05` + time$`14:25`+ time$`14:30` + time$`14:40`
+
+# Mid Afternoon 3:00-5:40 (17)
+time$MidAfternoon <- time$`15:00` + time$`15:05` + time$`15:25` + time$`15:30` + time$`15:35` + time$`15:40` + time$`16:00` + time$`16:05` + time$`16:25` + time$`16:30` + time$`16:35` + time$`16:40` + time$`17:00` + time$`17:15` + time$`17:20` + time$`17:25` + time$`17:30` + time$`17:40`
+
+# Night Games 6:00 - 9:00 (23)
+time$Night <- time$`18:00` + time$`18:10` + time$`18:15` + time$`18:20` + time$`18:25` + time$`18:30` + time$`18:40` + time$`19:00` + time$`19:05` + time$`19:10` + time$`19:15` + time$`19:20` + time$`19:25` + time$`19:30` + time$`19:40` + time$`20:00` + time$`20:10` + time$`20:15` + time$`20:20` + time$`20:25` + time$`20:30` + time$`20:35` + time$`20:40`
+
+time <- time[,c("Season","EarlyAfternoon","MidAfternoon","Night")]
+
+PBSPG <- data.frame("Season"=c("2013","2014","2015","2016","2017","2018","2019"),"EarlyAfternoon"=pentime$EarlyAfternoon/time$EarlyAfternoon,"MidAfternoon"=pentime$MidAfternoon/time$MidAfternoon,"Night"=pentime$Night/time$Night)
+```
+``` {r, include = FALSE}
+FBSPG <- data.frame("Season"=c("2013","2014","2015","2016","2017","2018","2019"),"EarlyAfternoon"=finestime$EarlyAfternoon/time$EarlyAfternoon,"MidAfternoon"=finestime$MidAfternoon/time$MidAfternoon,"Night"=finestime$Night/time$Night)
+```
+```{r, echo = FALSE, warning = FALSE}
+timecount <- rbind(pentime,PBSPG)
+
+timecount %>% gt(rowname_col = "Season") %>% fmt_number(columns=c(1:4),decimals = 2) %>% tab_row_group("Penalties Per Game",rows = c(8:14)) %>% tab_row_group(group="Total Penalties",rows = c(1:7)) %>% tab_header(md("**Penalties by Start Time**"),subtitle = md("Penalties Include *Regular* Season *Only*")) %>% opt_row_striping() %>% cols_label("EarlyAfternoon"=md("**Early<br>Afternoon**"),"MidAfternoon"=md("**Mid<br>Afternoon**"),"Night"=md("**Night**")) %>% tab_stubhead("Season") %>% tab_style(style = 
+    list(
+      cell_fill(color="white"),
+      cell_text(weight = "bold")
+    ),
+    locations = cells_stub(rows = TRUE)
+  ) %>% tab_style(style=list(cell_fill(color="darkslategray3"),cell_text(weight="bold",color="white",size="18")),locations=cells_stubhead()) %>%
+  tab_style(
+    style = list(
+    cell_fill(color = "darkslategray3"),
+    cell_text(color="white",size="18")),
+    locations = cells_column_labels(c(1:3))
+  ) %>%
+  tab_style(
+    style = list(
+      cell_fill(color = "lightcyan"),
+      cell_text(weight = "bold",size="18",align = "center")
+      ),
+    locations = cells_row_groups()) %>% summary_rows(groups = TRUE, fns = list(
+      Average = "mean")) %>% tab_style(style=list(cell_text(weight = "lighter")),locations = cells_summary()) %>% tab_options(summary_row.background.color = "lightyellow")
+
+# Start Time Visuals
+
+#Reshape the data for ggplot
+melted21 <- melt(PBSPG, id="Season",variable_name = "Time of Day")
+colnames(melted21)[2] <- "Time of Day"
+colnames(melted21)[3] <- "Frequency"
+
+PenaltiesByStartTime <- melted21 %>% ggplot(aes(x=`Time of Day`, y=Frequency, fill=Season, color=Season, text=paste(
+  "<b>Penalties: </b>",format(Frequency,digits=3)
+))) + geom_col(position = "dodge") + ggtitle("Penalties Per Game by Time of Day") + theme(legend.background = element_rect(color="#666666",fill = "white")) + labs(x="Time of Day",y="Penalty Count") + scale_fill_manual(values=c("salmon2","cadetblue2","darkolivegreen3","goldenrod2","pink1","plum2","firebrick1")) + scale_color_manual(values=c("salmon4","cadetblue4","darkolivegreen4","goldenrod4","pink3","plum4","firebrick4")) +  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1))
+ggplotly(PenaltiesByStartTime, tooltip = "text") %>%
+  layout(title = list(text=paste0('<B>Penalties Per Game by Time of Day</B>',
+  '<br>',
+  '<sup>',
+  'No Noticeable Differences',
+  '</sup>')))
+```
+
+Night games see almost a full penalty less on average than games in the early & mid afternoon.
+
+``` {r, include = FALSE}
+# Fines
+melted22 <- melt(FBSPG, id="Season",variable_name = "Time of Day")
+colnames(melted22)[2] <- "Time of Day"
+colnames(melted22)[3] <- "Frequency"
+
+FinesByStartTime <- melted22 %>% ggplot(aes(x=`Time of Day`, y=Frequency, fill=Season, color=Season, text=paste(
+  "<b>Fines: </b>",format(Frequency,digits=3)
+))) + geom_col(position = "dodge") + ggtitle("Fines Per Game by Time of Day") + theme(legend.background = element_rect(color="#666666",fill = "white")) + labs(x="Time of Day",y="Fine Count") + scale_fill_manual(values=c("salmon2","cadetblue2","darkolivegreen3","goldenrod2","pink1","plum2","firebrick1")) + scale_color_manual(values=c("salmon4","cadetblue4","darkolivegreen4","goldenrod4","pink3","plum4","firebrick4")) +  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1))
+ggplotly(FinesByStartTime, tooltip = "text") %>%
+  layout(title = list(text=paste0('<B>Fines Per Game by Time of Day</B>',
+  '<br>',
+  '<sup>',
+  '<I>Pre, Regular, and Post Season Included</I>',
+  '</sup>')))
+```
+``` {r, echo = FALSE, warning = FALSE}
+# Quarter
+penquarter <- table(penalty$Season, penalty$Quarter)
+penquarter <- as.data.frame.matrix(penquarter)
+penquarter <- tibble::rownames_to_column(penquarter, "Season")
+
+finesquarter <- table(discipline$Season, discipline$Quarter)
+finesquarter <- as.data.frame.matrix(finesquarter)
+finesquarter <- tibble::rownames_to_column(finesquarter,"Season")
+
+quartercount <- penquarter
+
+# Fines will have pre and post season, penalties will only have regular season
+# Not during Per Game since all games have 4 quarters
+quartercount %>% gt(rowname_col = "Season") %>% tab_header(md("**Penalties by Quarter**"),subtitle = md("Penalties Include *Regular* Season *Only*")) %>% opt_row_striping() %>% cols_label("1"=md("**1**"),"2"=md("**2**"),"3"=md("**3**"),"4"=md("**4**"),"5"=md("**Overtime**")) %>% tab_stubhead("Season") %>% tab_style(style = 
+    list(
+      cell_fill(color="white"),
+      cell_text(weight = "bold")
+    ),
+    locations = cells_stub(rows = TRUE)
+  ) %>% tab_style(style=list(cell_fill(color="darkslategray3"),cell_text(weight="bold",color="white",size="18")),locations=cells_stubhead()) %>%
+  tab_style(
+    style = list(
+    cell_fill(color = "darkslategray3"),
+    cell_text(color="white",size="18")),
+    locations = cells_column_labels(c(1:5))
+  )  %>% grand_summary_rows(fns = list(Average = "mean")) %>% tab_options(grand_summary_row.background.color = "lightyellow")
+
+PenaltiesByQuarter <- penalty %>% filter(Quarter<=4) %>% ggplot(aes(x=Quarter, text=paste(
+  "<b>Penalties: </b>",..count..
+))) + geom_bar(stat = "count",fill="cadetblue3") + ggtitle("Penalties by Quarter", subtitle = "Second Quarter Sees Most Penalties") + theme(plot.title=element_text(face="bold")) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid")) + labs(x="Quarter",y="Penalty Count")
+ggplotly(PenaltiesByQuarter, tooltip="text") %>%
+  layout(title = list(text = paste0('<B>Penalties by Quarter</B> (2013 - 2019)',
+                                    '<br>',
+                                    '<sup>',
+                                    'Second Quarter Sees Most Penalties',
+                                    '</sup>')))
+
+# Time Expired
+penalty %>% filter(seconds.left > 0) %>% ggplot(aes(x=seconds.left, group = Season, color = Season)) + geom_line(stat="count") + ggtitle("Penalties by Time Left",subtitle = "1800 Seconds Per Half - Increase at End of 2nd Quarter") + labs(x="Seconds Left",y="Penalty Count") + theme(plot.title=element_text(face="bold"))
+```
+
+I chose not to standardize this by quarter since all games have 4 quarters. Granted, not all games have overtime, but that isn't providing us with a large enough sample size to make a steadfast conclusion. From the table and first graph we can see that the second and fourth quarters see the most penalties.
+
+<br>While the last graph is a bit hard to look at, we can notice a slight increase in penalties at the end of the second quarter. <i>Note that the X-Axis represents the seconds remaining in the game, and there are 900 seconds in each quarter.</i><br>
+
+## Play Number in Series
+
+``` {r, echo = FALSE, warning = FALSE}
+# Play Number In Series
+playnum <- table(penalty$Season,penalty$PlayNumberInSeries)
+playnum <- as.data.frame.matrix(playnum)
+playnum <- tibble::rownames_to_column(playnum, "Season")
+
+PenByPlayNum <- penalty %>% ggplot(aes(x=PlayNumberInSeries, group=Season,color=Season, text=paste(
+  "<b>Play Number :</b>",x,
+  "<br><b>Penalties: </b>",..count..
+))) + geom_line(stat="count") + ggtitle("Penalties by Play Number in Series",subtitle="Third Play in Series Draws Most Penalties") + theme(plot.title=element_text(face="bold")) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid")) + labs(x="Play Number in Series",y="Penalty Count")
+ggplotly(PenByPlayNum, tooltip = "text") %>%
+  layout(title = list(text = paste0('<B>Penalties by Play Number in Series</B> (2013 - 2019)',
+                                    '<br>',
+                                    '<sup>',
+                                    'Third Play in Series Draws Most Penalties',
+                                    '</sup>')))
+```
+<br> Each season follows the same trend here, almost exactly. We see the most penalties during the 3rd play of a series. Granted, not all series can be guaranteed more than 4 plays (really, not all series can be guaranteed more than 1 play, considering potential turnovers), so we can make some interesting conclusions up through the fourth play. Keeping in mind the note about turnovers, we would assume to see the most penalties on the 1st play of a series, or at least for the 1st 3 plays to see a somewhat equal amount of penalties. However, we see a peak at the 3rd play (<i>if a series got to the 3rd play, there had to be a 1st and 2nd</i>) which tells us that it is significant that there are fewer plays on the 1st and 2nd penalties. Plays after that, it is not reasonable to draw conclusions for from this graph, due to the fact that not all series have more than 4 plays. <br>
+
+## Down and Distance
+
+```{r, warning = FALSE, echo = FALSE}
+# Down
+# Penalties -- Regular Season Only
+pendown <- table(penalty$Season, penalty$Down)
+pendown <- as.data.frame.matrix(pendown)
+pendown <- tibble::rownames_to_column(pendown,"Season")
+
+# Fines -- Pre, Reg, and Post
+finesdown <- table(discipline$Season, discipline$Down)
+finesdown <- as.data.frame.matrix(finesdown)
+finesdown <- tibble::rownames_to_column(finesdown, "Season")
+
+pfdown <- pendown
+
+# How Many of Each Down?
+
+# Regular Season
+regdowns <- playbyplay %>% filter(Season_Type == "Reg")
+regdowns <- table(regdowns$Season,regdowns$Down)
+regdowns <- as.data.frame.matrix(regdowns)
+regdowns <- tibble::rownames_to_column(regdowns,"Season")
+# Pre, Reg, and Post
+totaldowns <- table(playbyplay$Season,playbyplay$Down)
+totaldowns <- as.data.frame.matrix(totaldowns)
+totaldowns <- tibble::rownames_to_column(totaldowns,"Season")
+
+pendownPD <- data.frame("Season"=c("2013","2014","2015","2016","2017","2018","2019"),"0"=pendown$`0`/regdowns$`0`,"1"=pendown$`1`/regdowns$`1`,"2"=pendown$`2`/regdowns$`2`,"3"=pendown$`3`/regdowns$`3`,"4"=pendown$`4`/regdowns$`4`,check.names = FALSE) 
+
+finesdownPD <-data.frame("Season"=c("2013","2014","2015","2016","2017","2018","2019"),"0"=finesdown$`0`/totaldowns$`0`,"1"=finesdown$`1`/totaldowns$`1`,"2"=finesdown$`2`/totaldowns$`2`,"3"=finesdown$`3`/totaldowns$`3`,"4"=finesdown$`4`/totaldowns$`4`,check.names = FALSE) 
+
+pfdown <- rbind(pfdown,pendownPD)
+
+
+pfdown %>% gt(rowname_col = "Season") %>% fmt_number(columns = c(1:6),decimals = 2) %>% tab_row_group(group="Penalties Per Down",rows = c(8:14)) %>% tab_row_group(group = "Total Penalties",rows=c(1:7)) %>% tab_stubhead("Season") %>% tab_header(md("**Penalties by Down**"), subtitle = "Third & Fourth Downs See Increased Likelihood for Penalties") %>% opt_row_striping() %>% cols_label("0"=md("**Kickoff/<br>Extra Point**"),"1"=md("**1st**"),"2"=md("**2nd**"),"3"=md("**3rd**"),"4"=md("**4th**")) %>% 
+  tab_style(style = list(cell_fill(color="white"),cell_text(weight="bold")),locations = cells_stub(rows=TRUE)) %>% 
+  tab_style(style = list(cell_fill(color="darkslategray3"),cell_text(weight = "bold",color="white")), locations = cells_stubhead()) %>% 
+  tab_style(style = list(cell_fill(color = "darkslategray3"),cell_text(color="white", align = "center")),locations = cells_column_labels(c(1:5))) %>%
+  tab_style(style = list(cell_fill(color = "lightcyan"),cell_text(weight = "bold",align = "center")),
+    locations = cells_row_groups()) %>% 
+  summary_rows(groups = TRUE, fns = list(
+      Average = "mean")) %>% tab_style(style=list(cell_text(weight = "lighter")),locations = cells_summary()) %>% tab_options(summary_row.background.color = "lightyellow")
+```
+<br>When considering the frequency of which each down occurs, there is an increase in the likelihood of a penalty on 3rd & 4th downs. <br>
+
+Moving on to Distance - there is naturally a big spike with 10 yards to go, as it is the most common distance.
+``` {r, echo = FALSE}
+# Distance
+# Play Number In Series
+PenByDistance <- penalty %>% ggplot(aes(x=Distance, group=Season,color=Season, text=paste(
+  "<br><b>Distance: </b>",x,
+  "<br><b>Penalties: </b>",..count..
+))) + geom_line(stat="count") + ggtitle("Penalties by Distance",subtitle="Overall Spike with 10 Yards To Go") + theme(plot.title=element_text(face="bold")) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid")) + labs(x="Distance (Yards)",y="Penalty Count")
+ggplotly(PenByDistance, tooltip = "text") %>%
+  layout(title = list(text = paste0('<B>Penalties by Distance</B>',
+                                    '<br>',
+                                    '<sup>',
+                                    'Overall Spike with 10 Yards To Go',
+                                    '</sup>')))
+```
+<br>If we look at the penalties as the frequency within each down, we get a different graph: <br>
+``` {r, warning = FALSE, echo = FALSE}
+dispenalty <- table(penalty$Season,penalty$Distance)
+dispenalty <- as.data.frame.matrix(dispenalty)
+
+disoccurance <- playbyplay %>% filter(Season_Type=="Reg")
+disoccurance <- table(disoccurance$Season,disoccurance$Distance)
+disoccurance <- as.data.frame.matrix(disoccurance)
+
+dispenalty <- add_column(dispenalty, `37` = 0, .after = 37)
+dispenalty <- add_column(dispenalty, `41` = 0, .after = 41)
+dispenalty <- add_column(dispenalty, `42` = 0, .after = 42)
+dispenalty <- add_column(dispenalty, `43` = 0, .after = 43)
+dispenalty <- add_column(dispenalty, `44` = 0, .after = 44)
+dispenalty <- add_column(dispenalty, `48` = 0, .after = 48)
+
+distancepenaltyoccur <- dispenalty/disoccurance
+distancepenaltyoccur <- tibble::rownames_to_column(distancepenaltyoccur,"Season")
+
+distancepenaltycategories <- dispenalty
+distancepenaltycategories <- distancepenaltycategories %>%
+    mutate(`1-3` = select(., `1`:`3`) %>% rowSums(na.rm = TRUE),
+           `4-6` = select(., `4`:`6`) %>% rowSums(na.rm = TRUE),
+           `7-10` = select(., `7`:`10`) %>% rowSums(na.rm = TRUE),
+           `11-15` = select(., `11`:`15`) %>% rowSums(na.rm = TRUE),
+           `16-20` = select(., `16`:`20`) %>% rowSums(na.rm = TRUE),
+           `Over 20` = select(.,`21`:`48`) %>% rowSums(na.rm = TRUE))
+distancepenaltycategories <- distancepenaltycategories %>% select(`0`,`1-3`,`4-6`,`7-10`,`11-15`,`16-20`,`Over 20`)
+
+distanceoccurrancecategories <- disoccurance
+distanceoccurrancecategories <- distanceoccurrancecategories %>%
+    mutate(`1-3` = select(., `1`:`3`) %>% rowSums(na.rm = TRUE),
+           `4-6` = select(., `4`:`6`) %>% rowSums(na.rm = TRUE),
+           `7-10` = select(., `7`:`10`) %>% rowSums(na.rm = TRUE),
+           `11-15` = select(., `11`:`15`) %>% rowSums(na.rm = TRUE),
+           `16-20` = select(., `16`:`20`) %>% rowSums(na.rm = TRUE),
+           `Over 20` = select(.,`21`:`48`) %>% rowSums(na.rm = TRUE))
+distanceoccurrancecategories <- distanceoccurrancecategories %>% select(`0`,`1-3`,`4-6`,`7-10`,`11-15`,`16-20`,`Over 20`)
+
+distancecategories <- distancepenaltycategories/distanceoccurrancecategories
+distancecategories <- distancecategories*100
+rownames(distancecategories) <- c("2013","2014","2015","2016","2017","2018","2019")
+
+distancecategories %>% gt(rownames_to_stub = TRUE) %>% tab_header(md("**Penalties by Distance Per 100 Plays**"),subtitle = md("Penalties Include *Regular* Season *Only*")) %>% opt_row_striping() %>% tab_stubhead("Season") %>% tab_style(style = 
+    list(
+      cell_fill(color="white"),
+      cell_text(weight = "bold")
+    ),
+    locations = cells_stub(rows = TRUE)
+  ) %>% tab_style(style=list(cell_fill(color="darkslategray3"),cell_text(weight="bold",color="white",size="18")),locations=cells_stubhead()) %>%
+  tab_style(
+    style = list(
+    cell_fill(color = "darkslategray3"),
+    cell_text(color="white",size="18", weight = "bold")),
+    locations = cells_column_labels(c(1:7))
+  )  %>% grand_summary_rows(fns = list(Average = "mean")) %>% tab_options(grand_summary_row.background.color = "lightyellow")
+
+#Reshape the data for ggplot
+melted <- melt(distancepenaltyoccur,id="Season",variable.name = "Distance")
+
+colnames(melted)[2] <- "Distance"
+colnames(melted)[3] <- "Frequency"
+
+PenByDistanceFreq <- ggplot(melted,aes(x=Distance, y=Frequency, group = Season, color = Season,text=paste(
+  "<b>Season: </b>",Season,
+  "<br><b>Distance: </b>",Distance,
+  "<br><b>Frequency: </b>",format(Frequency*100,digits = 2),"%"))) + geom_line() + theme(axis.text.x = element_text(angle = 90)) + scale_y_continuous(labels = percent) + ggtitle("Penalties by Distance",subtitle="Frequency of Penalties for Each Distance -- Further Distances are Skewed") + theme(plot.title=element_text(face="bold")) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid")) + labs(x="Distance (Yards)",y="Frequency")
+  
+ggplotly(PenByDistanceFreq, tooltip = "text") %>%
+  layout(title = list(text = paste0('<B>Penalties by Distance</B>',
+                                    '<br>',
+                                    '<sup>',
+                                    'Frequency of Penalties for Each Distance -- Further Distances are Skewed',
+                                    '</sup>')))
+```
+<br>Although there are less data points for the longer distances, leading to skewness, this graph shows that the spike around ten yards can be explained by the many plays with 10 yards to go. Out of the categories under 10 yards to go, the mid-distance actually sees the highest penalties, which is surprising to me. <br>
+
+## Score Differential
+
+``` {r, include = FALSE}
+playbyplay <- playbyplay %>% mutate(
+  score.diff = ifelse(HomeScoreBeforePlay > VisitorScoreBeforePlay, 
+                      HomeScoreBeforePlay - VisitorScoreBeforePlay, 
+                      VisitorScoreBeforePlay - HomeScoreBeforePlay),
+  score.diff.cat = case_when(score.diff >= 17 ~ "3 Possessions or More",
+                             score.diff >= 9 ~ "2 Possessions",
+                             score.diff >= 4 ~ "1 Touchdown",
+                             score.diff > 0 ~ "Field Goal or Less",
+                             score.diff == 0 ~ "Tied"))
+# Plays With Given Score Differential
+playsscorediff <- table(playbyplay$Season, playbyplay$score.diff.cat)
+playsscorediff <- as.data.frame.matrix(playsscorediff)
+# Penalties With Given Score Differential
+penaltiesscorediff <- table(penalty$Season,penalty$score.diff.cat)
+penaltiesscorediff <- as.data.frame.matrix(penaltiesscorediff)
+# Frequency Per 100 Opportunities
+scorediffpenalty <- penaltiesscorediff/playsscorediff*100
+```
+``` {r, warning = FALSE, echo = FALSE}
+scorediffpenalty %>% gt(rownames_to_stub = TRUE) %>% tab_header(md("**Penalties by Score Differential Per 100 Plays**"),subtitle = md("Penalties Include *Regular* Season *Only*")) %>% opt_row_striping() %>% cols_label("3 Possessions or More"=md("3 Poss<br>or More"), "2 Possessions"=md("2 Poss"),"1 Touchdown"=md("1 TD"),"Field Goal or Less"=md("Field Goal<br>or Less")) %>% fmt_number(columns = 1:6) %>% tab_stubhead("Season") %>% tab_style(style = 
+    list(
+      cell_fill(color="white"),
+      cell_text(weight = "bold")
+    ),
+    locations = cells_stub(rows = TRUE)
+  ) %>% tab_style(style=list(cell_fill(color="darkslategray3"),cell_text(weight="bold",color="white",size="18")),locations=cells_stubhead()) %>%
+  tab_style(
+    style = list(
+    cell_fill(color = "darkslategray3"),
+    cell_text(color="white",size="18", weight = "bold", align = "center")),
+    locations = cells_column_labels(c(1:5))
+  ) %>% tab_style(
+    style = list(
+      cell_text(align="center")),
+    locations = cells_body(columns=1:6)
+  )  %>% grand_summary_rows(fns = list(Average = "mean")) %>% tab_options(grand_summary_row.background.color = "lightyellow")
+```
+
+We can see from the above table how the frequency of penalties changes depending on the score differential at the given time of the play.
+
+In the below graph, the numbers are taken from summing (across all season) the plays in each score differential category and the penalties in each score differential category. These numbers vary a small amount from the summary row in the above table because that is the average of each season's number.
+
+``` {r, warning = FALSE, echo = FALSE} 
+# Plays With Given Score Differential
+playsscorediff1 <- table(playbyplay$score.diff.cat)
+playsscorediff1 <- as.data.frame.table(playsscorediff1)
+playsscorediff1 <- tibble::column_to_rownames(playsscorediff1,"Var1")
+# Penalties With Given Score Differential
+penaltiesscorediff1 <- table(penalty$score.diff.cat)
+penaltiesscorediff1 <- as.data.frame.table(penaltiesscorediff1)
+penaltiesscorediff1 <- tibble::column_to_rownames(penaltiesscorediff1,"Var1")
+# Frequency Per 100 Opportunities
+scorediffpenalty1 <- penaltiesscorediff1/playsscorediff1*100
+scorediffpenalty1 <- tibble::rownames_to_column(scorediffpenalty1,"Score Differential")
+
+scorediffpenalty1$`Score Differential` <- factor(scorediffpenalty1$`Score Differential`, levels = c("Tied","Field Goal or Less","1 Touchdown","2 Possessions","3 Possessions or More"))
+
+PenByScoreDiff <- scorediffpenalty1 %>% ggplot(aes(x=`Score Differential`, y=Freq, text=paste(
+  "<b>Penalties: </b>",format(Freq, digits=3)
+))) + geom_col(stat = "identity",fill="cadetblue3") + ggtitle("Penalties by Score Differential", subtitle = "4 - 8 Point Score Differential Sees Most Penalties") + theme(plot.title=element_text(face="bold")) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid")) + labs(x="Score Differential",y="Penalty Count") + scale_y_continuous()
+ggplotly(PenByScoreDiff, tooltip="text") %>%
+  layout(title = list(text = paste0('<B>Penalties by Score Differential per 100 Plays</B> (2013 - 2019)',
+                                    '<br>',
+                                    '<sup>',
+                                    '4 - 8 Point Score Differential Sees Most Penalties',
+                                    '</sup>')))
+```
