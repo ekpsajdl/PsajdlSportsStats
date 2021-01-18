@@ -1,0 +1,1069 @@
+```{r, include = FALSE}
+library(MASS)
+library(tidyverse)
+library(lubridate)
+library(scales)
+library(ggridges)
+library(plotly)
+library(htmlwidgets)
+library(grid)
+library(gridExtra)
+library(png)
+library(downloader)
+library(grDevices)
+library(rmarkdown)
+install.packages("DescTools")
+library(DescTools)
+library(tidyr)
+```
+# The Challenge
+Football is a dangerous sport - this is clear. In recent years, we have seen an increased focus on injuries in the National Football League, with a large amount of that focus being on head injuries and the lasting, devastating effects that they leave. 
+These, along with many other brutal injuries, are the result of player-on-player contact. When we put grown men on a field and instruct them to run full-speed at each other and execute their full-strength, we cannot be surprised when these injuries occur.
+However, there is another breed of injury that has been overlooked: non-contact injuries. \
+
+In the NFL, there are 12 stadiums donned with synthetic turf as the playing surface. Recent investigations show ahtletes face much higher injury rates on synthetic turf compared with natural grass (Mack et al., 2018, Loughran et al., 2019).
+In addition epidemiologic investigations and biomechanical studies of cleat-turf interactions have shown that snthetic turf does not realease cleats as readily as natural turf, which may contribute to the occurrance of non-contact lower limb injuries (Kent et al., 2015). \
+
+In this analysis, I will analyze the effects that a synthetic versus natural playing surface has on player movements and other factors that might contribute to lower limb non-contact injuries. This analysis is broken up into three notebooks: Exploratory Analysis of NFL Non-Contact Injuries, Injury Risk Model, and Player Movements Patterns. This notebook will explore the various factors that might contribute to lower limb injuries and how they vary between natural and synthetic turf. From the data presented in the following analysis, I am going to suggest that first and foremost, all stadiums that are able to support natural grass should be donned with it. As will be shown throughout this analysis, in each factor that might contribute to non-contact lower limb injuries, they are amplified on synthetic turf. Another contributor that the NFL can control is the stadium. We will see an increased frequency in these injuries in games played in indoor stadiums with open roofs - why are we opening the roof? 
+
+# The Data
+The given data includes three datasets with in-game histories for 250 players from two subsequent NFL regular seasons. One hundred of the athletes have sustained one or more non-contact injuries that may have turf interaction as a contributing factor. The remaining 150 players did not sustain a non-contact lower limb injury and serve as a representative subset of the larger NFL population. \
+
+This datasets include the following:
+<br> 1. Player Track Data - includes player direction, speed, and orientation during the entire course of the play.
+<br> 2. Play List - contains information about each player - play in the dataset.
+<br> 3. Injury Record - contains information about the 105 lower limb injuries that occurred over the last two regular seasons.
+
+Something to note, however, is that not every injury has a play identifier included in its record because the exact play the injury occurred in was not recorded at the time of the injury. 
+
+``` {r, include = FALSE}
+# import data
+InjuryRecord <- data.table::fread("../input/nfl-playing-surface-analytics/InjuryRecord.csv", stringsAsFactors = F)
+PlayerTrackData <- data.table::fread("../input/nfl-playing-surface-analytics/PlayerTrackData.csv", stringsAsFactors = F)
+PlayList <- data.table::fread("../input/nfl-playing-surface-analytics/PlayList.csv", stringsAsFactors = F)
+```
+# Other Notebooks
+My analysis is split between four different notebooks. The rest of my notebooks can be found at the links below:
+
+[Player Movement Effects](https://www.kaggle.com/erinpsajdl/player-movement-effects) \
+This notebook takes a look at the effects that various game scenarios have on overall player movement.
+
+[Injury Risk Model for NFL Non-Contact Injuries](https://www.kaggle.com/erinpsajdl/injury-risk-model-for-nfl-non-contact-injuries) \
+The notebook builds out the injury risk model for non-contact lower limb injuries.
+
+[Player Movement Patterns](https://www.kaggle.com/erinpsajdl/player-movement-patterns) \ 
+This notebook looks at the player movement patterns for injured players in various scenarios.
+
+## Cleaning The Data
+The first thing that needs to be done is an inspection and cleaning of the data, as some of the variables are all over the place. This is necessary in order to run any further analysis, and to keep the analysis clean.
+
+### Stadium Type
+The following table shows every variable in the Stadium Type attribue in the PlayList dataset.
+```{r}
+# Cleaning the data
+PlayList %>%
+  count(StadiumType) %>%
+  rename(Count = n) %>%
+  mutate(Count = comma(Count)) %>%
+  kableExtra::kable(format = "html", escape = F) %>%
+  kableExtra::kable_styling("striped", full_width = F) %>%
+  kableExtra::scroll_box(height = "500px") %>%
+  kableExtra::kable_styling(fixed_thead = T)
+```
+Looking at this table, there are many different variables in this attribute that can be condensed to few distinct variables: \
+1. Outdoor \
+2. Indoor Closed \
+3. Indoor Open \
+
+``` {r, include = FALSE}
+# Set Categories
+outdoor <- c('Bowl','Cloudy','Heinz Field','Oudoor','Ourdoor','Outddors','Outdoors','Outdor','Outside','Outdoor')
+indoor_closed <- c('Indoor','Indoor, Roof Closed', 'Indoors','Retr. Rood - Closed','Retr. Roof Closed', 'Retr. Roof-Closed', 'Retractable Roof', 'Closed Dome','Dome','Dome, closed','Domed','Domed, closed')
+indoor_open <- c('Indoor, Open Roof','Retr. Roof - Open', 'Retr. Roof-Open', 'Open','Domed, open', 'Domed, Open','Outdoor Retr Roof-Open')
+
+# Transform Data
+clean_stadiums <- function(x) {
+  if (x %in% outdoor) {
+    "Outdoor"
+  } else if(x %in% indoor_closed) {
+    "Indoor Closed"
+  } else if(x %in% indoor_open){
+    "Indoor Open"
+  } else {
+    "Unknown"
+  }
+}
+
+PlayList <- PlayList %>%
+  mutate(StadiumType = mapply(clean_stadiums, StadiumType))
+```
+``` {r remove stadium vectors, include = FALSE}
+rm(outdoor)
+rm(indoor_closed)
+rm(indoor_open)
+```
+
+### Weather
+Similar to the Stadium Type issues, there are many different variables in the Weather attribute that could be condensed down to fewer variables. \
+
+The following table shows the many different variables included in the raw data.
+``` {r}
+PlayList %>%
+  count(Weather) %>%
+  rename(Count = n) %>%
+  mutate(Count = comma(Count)) %>%
+  kableExtra::kable(format = "html", escape = F) %>%
+  kableExtra::kable_styling("striped", full_width = F) %>%
+  kableExtra::scroll_box(height = "500px") %>%
+  kableExtra::kable_styling(fixed_thead = T)
+```
+The following variables will be used for Weather: \
+1. Rain \
+2. Clear \
+3. Overcast \
+4. Controlled Climate \
+5. Snow 
+``` {r}
+# Set Categories
+rain <- c('10% Chance of Rain','30% Chance of Rain','Cloudy with periods of rain, thunder possible. Winds shifting to WNW, 10-20 mph.','Cloudy, 50% change of rain','Cloudy, Rain','Light Rain','Rain','Rain Chance 40%','Rain likely, temps in low 40s.','Rain shower','Rainy','Scattered Showers','Showers')
+clear <- c('Clear','Clear and cold','Clear and Cool','Clear and Sunny','Clear and warm','Clear skies','Clear Skies','Clear to Partly Cloudy','Cold','Fair','Heat Index 95','Mostly sunny','Mostly Sunny','Mostly Sunny Skies','Partly clear','Partly sunny','Partly Sunny','Sun % clouds','Sunny','Sunny and clear','Sunny and cold','Sunny and warm','Sunny Skies','Sunny, highs to upper 80s','Sunny, Windy')
+overcast <- c('cloudy','Cloudy','Cloudy and cold','Cloudy and Cool','Cloudy, chance of rain','Cloudy, fog started developing in 2nd quarter','Coudy','Hazy','Mostly cloudy','Mostly Cloudy','Mostly Coudy','Overcast','Partly cloudy','Partly Cloudy','Partly Clouidy','Party Cloudy')
+controlled_climate <- c('Controlled Climate','Indoor','Indoors','N/A (Indoors)','N/A Indoor')
+snow <- c('Cloudy, light snow accumulating 1-3"', 'Heavy lake effect snow','Snow')
+
+# Transform Data
+clean_weather <- function(x) {
+  if (x %in% rain) {
+    "Rain"
+  } else if(x %in% clear) {
+    "Clear"
+  } else if(x %in% overcast){
+    "Overcast"
+  } else if(x %in% controlled_climate){
+    "Controlled Climate"
+  } else if(x %in% snow){
+    "Snow"
+  }
+  else {
+    "unknown"
+  }
+}
+
+PlayList <- PlayList %>%
+  mutate(Weather = mapply(clean_weather, Weather))
+```
+``` {r remove weather vectors, include = FALSE}
+rm(rain)
+rm(clear)
+rm(overcast)
+rm(controlled_climate)
+rm(snow)
+```   
+# Factors That May Contribute to Lower Limb Injuries
+I began my analysis by exploring factors that may interact with playing surface and contribute to lower limb non-contact injuries. I did this through making a series of graphs, and then running analyses for each variable.
+
+## Injury Record Data
+ To start, let us visualize the relationships between non-contact lower limb injuries and various factors in order to explore the data.
+
+### Distribution of Injuries by Body Part
+The recorded injuries are not distributed equally among body parts. The knee and the ankle are most susceptible to injury, according to the data, with the majority of injuries, 85.71% to be exact, being split between the two.
+This makes perfect sense as joints are typically highly susceptible to injury.
+``` {r}
+InjurybyBodyPartDis <- InjuryRecord %>%
+  count(BodyPart) %>%
+  ggplot(aes(x= reorder(BodyPart,n), y=n, group=1,text=paste(
+    "<b>Percent of Injuries: </b>",format(n/105*100,digits=2),"%",
+    "<br><b>Injury Count: </b>",n))) + geom_col(color="#359999",fill="#33CCCC") +
+  labs(x= "Body Part", y = "Number of Injuries") + ggtitle("Distribution of NFL Injuries by Body Part", subtitle = "Majority of Injuries are Split Between Knees and Ankles") + coord_flip() + theme(plot.title = element_text(face = "bold"))
+ggplotly(InjurybyBodyPartDis,tooltip="text", width = 700) %>%
+  layout(title = list(text = paste0('<B>Distribution of NFL Injuries by Body Part</B>',
+                                    '<br>',
+                                    '<sup>',
+                                    'Majority of Injuries are Split Between Knees and Ankles',
+                                    '</sup>')))
+```
+
+### Distribution of Injuries By Playing Surface
+With only 12 National Football League stadiums having synthetic turf, a higher percentage of games are played on natural turf.
+```{r}
+SurfaceDistribution <- PlayList %>%
+  distinct(GameID, FieldType) %>%
+  count(FieldType) %>%
+  ggplot(aes(x=FieldType, y=n, group=1,text=paste(
+    "<b>Frequency: </b>",format(n/5712*100,digits=2),"%",
+    "<br><b>Count: </b>",n))) +
+  geom_col(color="#003300",fill="#336633") + labs(x="Surface",y="Number of Games Played") + ggtitle("Distribution of NFL Games Played By Surface Type", subtitle = "Slight Majority of Games are Played on Natural Turf") + coord_flip() +theme(plot.title = element_text(face="bold"))
+ggplotly(SurfaceDistribution,tooltip="text",width=700) %>%
+  layout(title = list(text = paste0('<B>Distribution of NFL Games Played By Surface Type</B>',
+                                    '<br>',
+                                    '<sup>',
+                                    'Slight Majority of Games are Played on Natural Turf',
+                                    '</sup>')))
+```
+However, if playing surface had no effect on the occurance of injuries, we would expect the frequency of injuries by playing surface to be similar to the frequency of games played by playing surface. However, according to the provided data, a greater number of injuries have occured on synthetic turf. This was already known from the previous studies mentioned, but seeing it represented visually assists the understanding of the challenge.
+``` {r}
+InjuryCount <- InjuryRecord %>%
+  count(Surface) %>%
+  ggplot(aes(x=reorder(Surface,n), y=n, group=1,text=paste(
+    "<b>Percent of Injuries: </b>",format(n/105*100,digits=2),"%",
+    "<br><b>Injury Count: </b>",n))) + geom_col(color="#990000",fill="#FF6666") + labs(x="Surface",y="Number of Injuries") + ggtitle("Distribution of NFL Injuries by Playing Surface", subtitle = "More Injuries Occur on Synthetic Turf") + coord_flip() + theme(plot.title = element_text(face="bold"))
+ggplotly(InjuryCount,tooltip="text",width = 700) %>%
+  layout(title = list(text = paste0('<B>Distribution of NFL Injuries by Playing Surface</B>',
+                                    '<br>',
+                                    '<sup>',
+                                    'More Injuries Occur on Synthetic Turf',
+                                    '</sup>')))
+```
+In the entirety of the dataset, we are given data from 5,712 games. We are given 105 distinct injuries, two of which occurred in the same game. This means that injuries occurred in 1.84% of games. 
+
+- There were 3311 games played on natural turf. Of the 105 injuries, 48 occurred on natural turf. Two of those were in the same game, which means 47 of the 3311 games resulted in at least one injury, or 1.42%.
+
+- There were 2401 games played on synthetic turf. Of the 105 injuries, 57 occurred on synthetic turf, all in distinct games - this results in 2.37% of games played on synthetic turf resulting in injury.
+
+Visualizing this data will help to put into perspective the increased likelihood of injuries occuring on synthetic turf. The reference line represents 1.84% of all games that result in at least one injury.
+``` {r, include = FALSE}
+# How many plays are in the dataset?
+length(unique(PlayList$GameID))
+# 5712
+
+# Percentage
+105/5712
+# 1.84%
+
+# How many games were played on natural turf vs synthetic turf?
+PlayList %>%
+  distinct(GameID, FieldType) %>%
+  count(FieldType)
+
+# How many games on natural turf had an injury?
+InjuryRecord %>%
+  count(Surface)
+
+# Percentage
+47/3311
+
+57/2401
+
+# Create Data Frame For Bar Chart
+InjurySurfaceComparison <- data.frame("Surface" = c("Natural Turf","Synthetic Turf"), "Frequency" = c(0.0142, 0.0237))
+InjurySurfaceComparison <- as.data.frame(InjurySurfaceComparison)
+```
+```{r}
+InjurySurfaceFrequency <- ggplot(InjurySurfaceComparison, aes(Surface, Frequency, group=1,text=paste(
+  "<b>Frequency of Injury: </b>",format(Frequency*100,digits=3),"%"
+))) + geom_bar(stat = "identity", color="#003366", fill="#6699CC") + ggtitle("Freqency of NFL Injuries By Playing Surface", subtitle = "Injuries Occur in 1.84% of NFL Games, Up To 2.37% of Games Played on Synthetic Turf") + theme(plot.title = element_text(face="bold")) + geom_hline(yintercept=0.0184, linetype="dashed", color="#993300") + scale_y_continuous(labels=percent)
+ggplotly(InjurySurfaceFrequency,tooltip = "text", width=800) %>%
+  layout(title = list(text = paste0('<B>Frequency of NFL Injuries By Playing Surface</B>',
+                                    '<br>',
+                                    '<sup>',
+                                    'Injuries Occur in 1.84% of NFL Games, Up To 2.37% of Games Played on Synthetic Turf',
+                                    '</sup>')))
+```
+``` {r delete unneeded data frame, include = FALSE}
+rm(InjurySurfaceComparison)
+```
+### Statistical Analysis
+    
+For the categorical variables, I will begin by running a Chi-Square Test for each variable as it relates to injuries. If the Chi-Square returns statistical significance, I will run a Cramers V test for the correlation. **We have to remember, though, that these correlations are run on a play-by-play basis. If there was a high correlation for any of these variables, there would be an obscene amount of non-contact lower limb injuries taking place in the NFL. I am running these correlations to compare between the variables, not necessarily to find a strong correlation for any one variable.** To actually determine which levels of the variable have what effect, I will go back and look at the descriptive statistics. \
+The statistical analysis for these variables should confirm the findings from previous studies on this topic.
+
+``` {r injury tf, include = FALSE}
+# Injury Column Is For An Injury in the GAME NOT THE PLAY
+PlayList <- mutate(PlayList, Injury = ifelse(PlayList$GameID %in% InjuryRecord$GameID, "TRUE", "FALSE"))
+```
+    
+``` {r playing surface chi square}
+chisq.test(PlayList$Injury, PlayList$FieldType)
+```    
+ The P-Value of the Chi-Square is less than 0.05, meaning the playing surface of the game is statistically significant on whether or not an injury occurs on any given play. Now, I am still going to run the Cramer V correlation, but again, only for the purpose of comparison between variables.
+``` {r playing surface cramer v}
+CramerV(PlayList$Injury, PlayList$FieldType)    
+```    
+This Cramer V is 0.03530456.     
+     
+## Body Part and Surface Interaction 
+Overall, injuries occur more frequently on synthetic turf, but that does not hold true for each body part. When it comes to the most frequently injured body parts, knee injuries occur equally frequently on synthetic and natural turf, while ankles are slightly more frequently injured on synthetic turf. Toes are injured much more often on synthetic turf (where do you think turf toe gets its name?), while feet face more injuries on natural grass. The lone heel injury in our dataset occured on natural grass, but again, there is only one data point.
+``` {r}
+SurfaceBodyPartInjury <- InjuryRecord %>%
+  ggplot(aes(x=BodyPart, fill=Surface, color=Surface,text=paste(
+    "<b>Percent of Total Injuries: </b>",format(..count../105*100,digits=2),"%",
+    "<br><b>Injury Count: </b>",..count..
+  ))) + geom_bar(stat="count", position = "fill") + scale_y_continuous(labels = percent) + ggtitle("Injuries by Playing Surface and Body Part", subtitle = "Knee Injuries are Split, Ankle and Toe Injuries Occur More Often on Synthetic Turf") + theme(plot.title = element_text(face="bold")) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid")) + labs(x="Body Part", y = "Frequency") + scale_fill_manual(values = c("bisque1","lightcyan2"))
+ggplotly(SurfaceBodyPartInjury,tooltip="text", width = 800) %>%
+  layout(title = list(text = paste0('<B>Injuries by Playing Surface and Body Part</B>',
+                                    '<br>',
+                                    '<sup>',
+                                    'Knee Injuries are Split, Ankle and Toe Injuries Occur More Often on Synthetic Turf',
+                                    '</sup>'))) 
+```
+
+## By Severity Of Injury 
+Not all injuries are created equal. Some injuries might leave players missing only one game, while some injuries might be career-ending. In the provided data set, the severity of the injuries is noted by the player missing 1 day or more, 7 days or more, 28 days or more, or 42 days or more. As shown in the following graph, it is most common for lower body injuries to sideline players for more than 7, but less than 28 days. 
+``` {r}
+# Insert New Column To Record Days Missed
+InjuryRecord <- InjuryRecord %>%
+  mutate(severity = ifelse(DM_M42 == 1, "42",
+                           ifelse(DM_M42 == 0 & DM_M28 == 1, "28",
+                                  ifelse(DM_M42 == 0 & DM_M28 == 0 & DM_M7 == 1, "7", "1"))))
+InjuryRecord$severity <- factor(InjuryRecord$severity, levels=c("1","7","28","42"))
+
+SeverityGraph <- InjuryRecord %>%
+  count(severity) %>%
+  ggplot(aes(x=severity,y=n, group=1,text=paste(
+    "<b>Percent of Injuries: </b>",format(n/105*100,digits=2),"%",
+    "<br><b>Injury Count: </b>",n))) + geom_col(color="#FFCC33",fill="#FFFF99") + ggtitle("All Injuries Are Not Created Equal",subtitle = "Lower Body Non-Contact Injuries Most Frequently Sideline Players For Between 7-27 Days ") + theme(plot.title = element_text(face = "bold")) + labs(x="Days Missed To Injury",y="Count") + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid"))
+ggplotly(SeverityGraph,tooltip="text",width=700) %>%
+  layout(title = list(text = paste0('<B>All Injuries Are Not Created Equal</B>',
+                                    '<br>',
+                                    '<sup>',
+                                    'Lower Body Non-Contact Injuries Most Frequently Sideline Players For Between 7-27 Days',
+                                    '</sup>')))
+```
+When it comes to the severity of the injury by body part, there are a few things to note. 
+
+- No foot injury had a recovery time of less than 28 days. (Foot injuries occur more frequently on natural grass, mind you.)
+
+- Ankles and knees, the majority of injuries, did not have a large variance in their recovery times, with the biggest difference being ankles had more 1-6 day recovery times and knees had more 7-27 day recovery times.
+
+- There was only one heel injury recorded.
+``` {r}
+InjurySeverityBodyPart <- InjuryRecord %>%
+  ggplot(aes(x=BodyPart, fill = factor(severity, levels = c("42","28","7","1")),color = factor(severity, levels = c("42","28","7","1")),text=paste(
+    "<b>Percent of Total Injuries: </b>",format(..count../105*100,digits=2),"%",
+    "<br><b>Injury Count: </b>",..count..
+  ))) + geom_bar(stat = "count", position = "fill") + ggtitle("Severity of Injury by Body Part",subtitle = "Foot Injuries Generally Keep Players Out of the Game the Longest") + theme(plot.title = element_text(face="bold")) + scale_color_manual(values=c("darkseagreen4","gold3","darkslategray4","coral3")) + scale_fill_manual(values=c("darkseagreen2","lightgoldenrod2","darkslategray3","darksalmon")) + labs(fill = "Days Missed",x="Body Part", y ="Frequency") + scale_y_continuous(labels = percent) + guides(color=FALSE) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid"))
+ggplotly(InjurySeverityBodyPart, tooltip = "text", width = 800) %>%
+  layout(title = list(text = paste0('<B>Severity of Injury by Body Part</B>',
+                                    '<br>',
+                                    '<sup>',
+                                    'Foot Injuries Generally Keep Players Out of the Game the Longest',
+                                    '</sup>')))
+```
+Although injuries are more frequent on synthetic turf, they are not necessarily any more or less severe than injuries occuring on natural turf. The recovery times between the two surfaces are very similar.
+``` {r}
+InjurySeveritySurface <- InjuryRecord %>%
+  ggplot(aes(x=Surface, fill = factor(severity, levels = c("42","28","7","1")), color = factor(severity, levels = c("42","28","7","1")),text=paste(
+    "<b>Percent of Total Injuries: </b>",format(..count../105*100,digits=2),"%",
+    "<br><b>Injury Count: </b>",..count..
+  ))) + geom_bar(stat = "count", position = "fill") + ggtitle("Injury Severity by Playing Surface", subtitle = "Recovery Times are Similar") + theme(plot.title=element_text(face="bold")) + labs(fill="Days Missed",x="Playing Surface",y="Frequency") + scale_y_continuous(labels = percent) + guides(color=FALSE) + scale_color_manual(values=c("darkseagreen4","gold3","darkslategray4","coral3")) + scale_fill_manual(values=c("darkseagreen2","lightgoldenrod2","darkslategray3","darksalmon")) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid"))
+ggplotly(InjurySeveritySurface, tooltip= "text", width = 800) %>%
+  layout(title = list(text = paste0('<B>Injury Severity by Playing Surface</B>',
+                                    '<br>',
+                                    '<sup>',
+                                    'Recovery Times are Similar',
+                                    '</sup>')))
+```
+
+## Exploring Injuries By Player Position 
+
+``` {r, include = FALSE}
+# First, I have to add player positon from the PlayList data to the Injury Record data.
+library(dplyr)
+x <- PlayList %>% filter(!is.na(Position), Position != "Missing Data") %>% distinct(PlayerKey, Position)
+
+InjuryRecord <- InjuryRecord %>% left_join(x, by = "PlayerKey")
+
+InjuryRecord <- InjuryRecord %>% distinct(PlayKey, GameID, BodyPart, .keep_all = T)
+
+InjuryRecord <- InjuryRecord %>% left_join(PlayList %>% select(GameID, StadiumType, FieldType, Temperature, Weather), by = "GameID") %>% distinct(.keep_all = T)
+
+InjuryRecord <- InjuryRecord %>% left_join(PlayList %>% select(PlayKey, PlayerDay, PlayerGame, PlayType, PlayerGamePlay),by="PlayKey")
+
+InjuryRecord <- InjuryRecord %>% 
+  mutate(PlayerGame = ifelse(is.na(PlayerGame), as.numeric(str_extract(GameID, "[^-]*$")),PlayerGame))
+    
+rm(x)
+gc()
+```
+### Injury By Player Position 
+
+Wide Receivers, Outside Linebackers, and Cornerbacks are the most injured positon in our dataset. 
+``` {r}
+InjurybyPosition <- InjuryRecord %>%
+  count(Position, FieldType) %>%
+  ggplot(aes(x=reorder(Position,n),y=n,fill=FieldType, color=FieldType,text = paste("<b>Percent of Injuries: </b>",format(n/105*100,digits=2),"%",
+    "<br><b>Injury Count: </b>",n))) + geom_col() + coord_flip() + ggtitle("Injury by Position",subtitle = "Wide Receivers, Outside Linebackers, and Cornerbacks are Injured Most Frequently") + labs(x="Position",y="Number of Injuries", fill = "Field Type") + theme(plot.title = element_text(face = "bold")) + scale_fill_manual(values = c("paleturquoise2","darkseagreen2")) + scale_color_manual(values = c("paleturquoise4","darkseagreen4")) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid")) + guides(color=FALSE)
+ggplotly(InjurybyPosition,tooltip="text", width= 700) %>%
+  layout(title = list(text = paste0('<B>Injury by Position</B>',
+                                    '<br>',
+                                    '<sup>',
+                                    'Wide Receivers, Outside Linebackers, and Cornerbacks are Injured Most Frequently',
+                                    '</sup>')))
+```
+
+Of the top four most frequently injured positions, three of them are injured more often on synthetic turf - the only one with more injuries on natural grass beting outside linebackers. A reason for this might be that defensive players are often following offensive players, and not able to make as hard of premeditated cuts as offensive players, causing them to lose their footing on natural turf. \
+
+### Body Part Injury By Position 
+
+This graph shows that for the most part, all positions still have ankles and knees are the most frequently injured body part when it comes to non-contact injuries.
+``` {r}
+InjurybyBodyPartPosition <- InjuryRecord %>%
+  count(Position,BodyPart) %>%
+  ggplot(aes(x=reorder(Position,n),y=n, fill=BodyPart, color=BodyPart, group = 1, text = paste(
+    "<b>Perent of Total Injuries: </b>",format(n/105*100,digits=2),"%",
+    "<br><b>Injury Count: </b>",n))) + geom_col() + scale_fill_manual(values = c("cadetblue3","darkseagreen3","lightgoldenrod2","lightsalmon1","pink2")) + scale_color_manual(values=c("cadetblue4","darkseagreen4","lightgoldenrod4","lightsalmon3","pink4")) + coord_flip() + ggtitle("Injury Breakdown by Body Part, Position", subtitle = "Ankles and Knees Still Make Up a Majority for Each Position") + theme(plot.title = element_text(face="bold")) + labs(x="Position",y="Frequency",fill = "Body Part") + guides(color=FALSE) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid"))
+ggplotly(InjurybyBodyPartPosition,tooltip = "text", width=800) %>%
+  layout(title = list(text = paste0('<B>Injury Breakdown by Body Part, Position</B>',
+                                    '<br>',
+                                    '<sup>',
+                                    'Ankles and Knees Still Make Up a Majority for Each Position',
+                                    '</sup>')))
+```  
+    
+## Injury By Play Type 
+
+Passing and rushing plays are the most frequent play types, which makes perfect sense knowing that those are the play types the offense utilizes as they are moving down the field.
+``` {r}
+PlayFrequency <- PlayList %>%
+  filter(!PlayType %in% c("","0")) %>%
+  group_by(FieldType) %>%
+  count(PlayType) %>%
+  ggplot(aes(x=reorder(PlayType,n),y=n, fill = FieldType, color = FieldType, group = 1, text = paste("<b>Percent of Plays: </b>", format(n/267005*100, digits=2),"%",
+    "<br><b>Play Count: </b>",n))) + geom_col() + coord_flip() + ggtitle("Frequency of Plays",subtitle = "Passing and Rushing Plays are Most Frequent") + labs(x="Play Type",y="Number of Plays", "Field Type") + scale_fill_manual(values=c("paleturquoise2","darkseagreen2")) + scale_color_manual(values=c("paleturquoise4","darkseagreen4")) + theme(plot.title = element_text(face = "bold")) + scale_y_continuous(labels = comma) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid"))
+ggplotly(PlayFrequency, tooltip = "text") %>% layout(title = list(text = paste0('<B>Frequency of Plays</B>')))
+
+InjuryPlaySurface <- ggplot(data=subset(InjuryRecord, !is.na(PlayType)),aes(x=Surface, fill = PlayType, color =  PlayType, text=paste(
+    "<b>Percent of Total Injuries: </b>", format(..count../105*100,digits=2),"%",
+    "<br><b>Count: </b>",..count..))) + geom_bar(stat = "count", position = "fill") + ggtitle("Breakdown of Injuries by Play Type and Playing Surface", subtitle = "No Major Differences Between Playing Surfaces") + theme(plot.title=element_text(face="bold")) + labs(fill="Play Type",x="Playing Surface",y="Frequency") + scale_y_continuous(labels = percent) + guides(color=FALSE) + scale_color_manual(values=c("darkseagreen4","gold3","darkslategray4","coral3","azure4","aquamarine4","pink4","lavenderblush3")) + scale_fill_manual(values=c("darkseagreen2","lightgoldenrod2","darkslategray3","darksalmon","azure2","aquamarine2","pink2","lavenderblush1")) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid"))
+ggplotly(InjuryPlaySurface,tooltip = "text") %>% layout(title = list(text = paste0('<B>Breakdown of Injures by Play Type and Playing Surface</B>',
+                                    '<br>',
+                                    '<sup>',
+                                    'No Major Differences Between Playing Surface',
+                                    '</sup>')))
+```
+
+Of the injuries occuring on each playing surface, the breakdown by play type does not vary too much. As we know, though, there are not equal injuries occuring on both playing surfaces.
+    
+``` {r, include = FALSE}
+# Create Data Frame For Frequencies
+InjuryPlayTypeComparison <- data.frame("Play.Type" = c("Kickoff","Kickoff", "Kickoff Not Returned","Kickoff Returned","Pass","Pass","Punt","Punt","Punt Not Returned","Rush","Rush"), "Frequency" = c(0.0009, 0.0016, 0.0005, 0.0008, 0.0002, 0.0004, 0.0013, 0.0017, 0.0007, 0.0003,0.0002), "FieldType" = c("Natural","Synthetic","Synthetic","Synthetic","Natural","Synthetic","Synthetic","Natural","Synthetic","Synthetic","Natural"))
+InjuryPlayTypeComparison <- as.data.frame(InjuryPlayTypeComparison)
+```
+
+```{r}
+InjuryPlayTypeFrequency <- ggplot(InjuryPlayTypeComparison, aes(x = Play.Type, y = Frequency, fill = FieldType, color = FieldType,text=paste(
+  "<b>Frequency of Injury: </b>",format(Frequency*100,digits=3),"%"
+))) + geom_bar(stat = "identity", position = "dodge") + ggtitle("Freqency of NFL Injuries By Play Type", subtitle = "Injuries Occur on 0.04% of NFL Plays, Up To 0.16% of Punting Plays") + theme(plot.title = element_text(face="bold"), axis.text.x = element_text(angle = 90, hjust =1)) + geom_hline(yintercept=0.0004, linetype="dashed", color="#993300") + scale_y_continuous(labels=percent) + labs(x="Play Type", fill = "Field Type") + scale_fill_manual(values = c("paleturquoise2","darkseagreen2")) + scale_color_manual(values = c("paleturquoise4","darkseagreen4")) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid"))
+ggplotly(InjuryPlayTypeFrequency,tooltip = "text") %>%
+  layout(title = list(text = paste0('<B>Frequency of NFL Injuries By Play Type</B>',
+                                    '<br>',
+                                    '<sup>',
+                                    'Injuries Occur on 0.04% of NFL Plays, Up To 0.13 - 0.17% of Punting Plays',
+                                    '</sup>')))
+```
+``` {r remove unneeded data frame two, include = FALSE}
+rm(InjuryPlayTypeComparison)
+gc()
+```
+When looking at the frequency of injuries by play type on each surface, though, a few more insights can be made: 
+    
+    -  When it comes to pass and rush plays, there is a slightly higher percentage of injuries in both categories on synthetic turf. However, when number of times those play types take place in a game is taken into consideration, the frequency is not as high as the rest of the play types. \
+    
+    - 5.71% of non-contact injuries occur on punts on natural turf, while only 1.26% of plays are punts on natural turf. On the 3351 punt plays on natural turf, there have been 6 injuries, which is a frequency .17% of plays. \
+    
+    - Of the 2395 punt plays on synthetic turf, there have been 3 injuries, which is a frequency of .13% of plays. With these last two points, we must keep in mind the nature of punt plays is very dangerous in and of itself. \
+    
+    - Kickoffs are the next highest frequency of injury. \
+        
+        + Kickoffs on Nautral Turf: 0.09% \
+        
+        + Kickoffs on Synthetic Turf: 0.16% \   
+
+### Statistical Analysis 
+
+But does the type of play have a true effect on the occurance of injury?
+
+``` {r, warning = FALSE}
+chisq.test(PlayList$Injury, PlayList$PlayType)
+```
+This again returned a P-Value of less than 0.05, telling us that the play type is statistically significant on the type of injury. However, I do not think changing the rules of the beloved game of football in order to prevent a few non-contact injuries would go over well with anyone who plays or watches the game. But what this is telling us is that we need to pay a little more attention to these special teams plays specifically to see what exactly is causing the injury in these scenarios. The good news is that we were aware that kickoffs and punts are dangerous, and there are precautions starting to be taken to prevent injury. However, a lot of these studies and precautions revolve around contact injuries, not non-contact injuries. \
+
+``` {r}
+CramerV(PlayList$Injury, PlayList$PlayType)
+```
+    
+This has the weakest correlelation of all of the categorical variables I will be testing.
+
+## Injury By Time of Game 
+
+As is clear to see in the below density chart, injuries happen most often before the 30th snap for a player in the given game. The distribution for synthetic turf has a less steep slope than does natural grass. 
+``` {r, warning = FALSE}
+ggplot(data = InjuryRecord,aes(x=PlayerGamePlay)) + geom_density(aes(fill=FieldType),alpha = 0.7) + ggtitle("Distribution of Injuries by Plays in Game",subtitle = "Injuries Occur Earlier in Games Overall") + theme(plot.title = element_text(face="bold")) + labs(x="Game Play of Injured Player",y="Distribution",fill="Field Type") + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid"))
+```
+
+### Statistical Analysis
+
+Now I am going to compare the two sets of data to discover if there is a significant difference in when injuries occur on natural grass versus synthetic turf. As we can see in the above graph, the data is not normally distributed, so I cannot use an Independent T-Test. However, I can use a Wilcoxon Mann-Whitney test, instead. 
+``` {r, warning = FALSE }
+wilcox.test(InjuryRecord$PlayerGamePlay ~ InjuryRecord$FieldType)
+```
+
+The P-Value of the Wilcoxon Mann-Whitney test returned 0.4407, meaning there is not a statistically significant effect from the playing surface on the snap in the game when an injury occurs. The slight difference we are seeing is due either to chance or the other variables we are considering. \
+
+**A thought for further analysis:**    
+This data was not provided in the given dataset, however, an interesting piece to take into consideration would be how many snaps a player has been a part of throughout his career. This would allow us to have another metric to measure the "wear and tear" that has occurred on a players body through game play, and analyze if that contributes to non-contact injuries.
+    
+## Injury By Weather 
+Weather is a factor that one would assume would play a role in injuries - particularly rain making the playing surface slick. Let us dive further in to the data to uncover if that is true. 
+
+### Freqeuncy of Weather 
+Excluding unknowns, a little of 40% games are played in overcast weather total. In the spirit of this analysis, however, the graph is split between playing surfaces. The only weather condition with more games played on a synthetic surface is "Controlled Climate" which represents indoor games.
+``` {r}
+GamesInWeather <- PlayList %>%
+  distinct(GameID, Weather, FieldType) %>%
+  filter(!Weather %in% c("unknown")) %>%
+  count(Weather, FieldType) %>%
+    ggplot(aes(x=reorder(Weather,n),y=n, fill = FieldType, color = FieldType, text = paste("<br><b>Percent of Games: </b>",format(n/5712*100,digits=2),"%",
+               "<br><b>Game Count: </b>",n))) + geom_col(position = "dodge") + coord_flip() + ggtitle("Games Played by Weather Condition", subtitle = "More Games Played in Overcast Weather (Unknowns Excluded)") + theme(plot.title = element_text(face = "bold")) + labs(x="Weather",y="Number of Injuries", fill = "Field Type") + scale_y_continuous(labels = comma) + scale_fill_manual(values = c("paleturquoise2","darkseagreen2")) + scale_color_manual(values = c("paleturquoise4","darkseagreen4")) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid")) + guides(color = FALSE)
+ggplotly(GamesInWeather,tooltip = "text", width = 900) %>% layout(title = list(text = paste0('<B>Games Played by Weather Condition</B>',
+                                    '<br>',
+                                    '<sup>',
+                                    'More Games Played in Overcast Weather Total (Unknowns Excluded)',
+                                    '</sup>')))
+```
+
+### Frequency of Injuries By Weather 
+
+The most injuries have occurred in clear conditions, which is interesting considering more games are played in overcast weather.
+``` {r}
+InjuryByWeather <- InjuryRecord %>%
+  filter(!Weather %in% c("unknown")) %>%
+  count(Weather,FieldType) %>%
+  ggplot(aes(x=reorder(Weather,n),y=n, fill = FieldType, color = FieldType,text = paste("<br><b>Percent of Injuries: </b>",format(n/97*100,digits = 2),"%",
+                                                                "<br><b>Injury Count: </b>",n))) + geom_col(position = "dodge") + coord_flip() + ggtitle("Injuries by Weather Condition",subtitle = "Injuries Happen in Overcast Weather Most Frequently") + labs(x="Weather",y="Number of Injuries", fill = "Field Type") + theme(plot.title = element_text(face = "bold")) + scale_fill_manual(values = c("paleturquoise2","darkseagreen2")) + scale_color_manual(values = c("paleturquoise4","darkseagreen4")) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid")) + guides(color = FALSE)
+ggplotly(InjuryByWeather, tooltip = "text") %>%
+  layout(title = list(text = paste0('<B>Injuries by Weather Condition</B>',
+                                    '<br>',
+                                    '<sup>',
+                                    'Injuries Happen in Overcast Weather (Combined) Most Frequently',
+                                    '</sup>')))
+```
+
+## Frequency of Injuries By Weather, Per Game 
+
+However, as we know, there is not an even spread of games in each weather condition. Taking in to consideration the number of games played in each weather condition, controlled climate and rainy games have the highest frequencies of injuries. Also, each weather condition has an amplified frequency of injuries on synthetic turf.
+``` {r, include = FALSE}
+# How many games are in the dataset?
+length(unique(PlayList$GameID))
+# 5712
+
+# Percentage of Games With An Injury 
+105/5712
+# 1.84%
+
+# How many instances of specific weather conditions are there?
+PlayList %>%
+  distinct(GameID, Weather, FieldType) %>%
+  count(Weather, FieldType)
+  # Clear, Natural: 1474
+  # Clear, Synthetic: 617
+  # Controlled Climate, Synthetic: 373
+  # Overcast, Natural: 1393
+  # Overcast, Synthetic: 960
+  # Rain, Natural: 202
+  # Rain, Synthetic: 153
+  # Snow, Natural: 30
+  # Snow, Synthetic: 8
+  # Unknown: 434
+
+# Of the injuries, which occurred in which weather conditions?
+InjuryRecord %>%
+  count(Weather, FieldType)
+  # Clear, Natural: 24
+  # Clear, Synthetic: 17
+  # Controlled Climate, Synthetic: 12
+  # Overcast, Natural: 16
+  # Overcast, Synthetic: 19
+  # Rain, Natural: 5
+  # Rain, Synthetic: 4
+ 
+
+# Create Data Frame For Bar Chart
+InjuryWeatherComparison <- data.frame("Weather" = c("Clear","Clear","Controlled Climate","Overcast","Overcast","Rain","Rain"), "Frequency" = c(24/1474,17/617, 12/373, 16/1393,19/960,5/202,4/153 ),"FieldType" = c("Natural","Synthetic","Synthetic","Natural","Synthetic","Natural","Synthetic"))
+InjuryWeatherComparison <- as.data.frame(InjuryWeatherComparison)
+```
+```{r}
+InjuryWeatherGraph <- ggplot(InjuryWeatherComparison, aes(Weather, Frequency, fill=FieldType, color = FieldType, text = paste("<b>Frequency of Injuries: </b>", format(Frequency*100,digits = 3),"%"))) + geom_bar(stat = "identity", position = "dodge") + ggtitle("Freqency of NFL Injuries by Weather Condition", subtitle = "Injuries Occur in 1.84% of NFL Games, Up to 2.72% of Games In Controlled Climate") + theme(plot.title = element_text(face="bold")) + geom_hline(yintercept=0.0184, linetype="dashed", color="#993300") + scale_y_continuous(labels=percent) + scale_fill_manual(values = c("paleturquoise2","darkseagreen2")) + scale_color_manual(values = c("paleturquoise4","darkseagreen4")) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid")) + labs(fill = "Field Type") + guides(color = FALSE)
+ggplotly(InjuryWeatherGraph, tooltip = "text", width = 900) %>%
+  layout(title = list(text = paste0('<B>Frequency of NFL Injuries by Weather Condition</B>',
+                                    '<br>',
+                                    '<sup>',
+                                    'Injuries Occur in 1.84% of NFL Games, Up to 3.22% of Games In Controlled Climate(Synthetic)',
+                                    '</sup>')))
+```
+``` {r remove unneeded data frame three, include = FALSE}
+rm(InjuryWeatherComparison)
+```   
+
+### Statistical Analysis
+
+For the statistical analysis of the effect of weather, I will again use a Chi-Square test. 
+``` {r}
+chisq.test(PlayList$Injury, PlayList$Weather)
+```
+
+The P-Value of this Chi-Square test is again less than 0.05, meaning that the effect of weather is statistically significant on whether or not an injury occurs on any given play. Looking at the graphs, games played in the rain (natural grass and synthetic turf) have the highest total freqency of injury - again, this effect is amplified on synthetic turf. \
+
+``` {r}
+CramerV(PlayList$Injury, PlayList$Weather)
+```
+
+This Cramer V is 0.03419574, which is not quite as high as the playing surface correlation. 
+        
+## Injuries By Stadium 
+
+### Games Played By Stadium Type 
+
+Excluding unknowns in the dataset, over half of the games are played in an outdoor stadium on natural grass.
+``` {r}
+#5313 Games Excluding Unknowns
+GamesInStadiumType <- PlayList %>%
+  filter(!StadiumType %in% c("Unknown")) %>%
+   distinct(GameID, StadiumType, FieldType) %>%
+  count(StadiumType, FieldType) %>%
+    ggplot(aes(x=reorder(StadiumType,n),y=n, fill=FieldType, color=FieldType, text = paste("<br><b>Percent of Games Played: </b>",format(n/5712*100,digits=2),"%",
+                                                                     "<br><b>Game Count: </b>",n))) + geom_col(position = "dodge") + coord_flip() + ggtitle("Games Played by Stadium Type", subtitle = "More Games Played Outdoors (Unknowns Excluded)") + theme(plot.title = element_text(face = "bold")) + labs(x="Weather",y="Games Played", fill = "Field Type") + scale_y_continuous(labels = comma) + scale_fill_manual(values = c("paleturquoise2","darkseagreen2")) + scale_color_manual(values = c("paleturquoise4","darkseagreen4")) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid")) + guides(color = FALSE)
+ggplotly(GamesInStadiumType,tooltip = "text") %>% layout(title = list(text = paste0('<B>Games Played by Stadium Type</B>',
+                                    '<br>',
+                                    '<sup>',
+                                    'More Games Played Outdoors (Unknowns Excluded)',
+                                    '</sup>')))
+```
+
+### Count By Stadium Type 
+
+Injuries happen in outdoor stadiums on natural turf the most, which is logical considering the majority of games are played in that condition. However, notice the indoor stadiums with open roofs and synethic turf have a much higher injury frequency than it does games played. \
+
+``` {r}
+# Excludes 6 Unknowns
+InjuryByStadium <- InjuryRecord %>%
+  filter(!StadiumType %in% c("Unknown")) %>%
+  count(StadiumType,FieldType) %>%
+  ggplot(aes(x=reorder(StadiumType,n),y=n, fill = FieldType, color=FieldType, text = paste("<br><b>Percent of Total Injures: </b>",format(n/99*100,digits = 2),"%",
+                                                                    "<br><b>Injury Count: </b>",n))) + geom_col(position = "dodge") + coord_flip() + ggtitle("Injuries by Stadium Type",subtitle = "Injuries Happen Outdoors Most Frequently (Unknowns Excluded)") + labs(x="Stadium Type",y="Number of Injuries", fill = "Field Type") + theme(plot.title = element_text(face = "bold")) + scale_fill_manual(values = c("paleturquoise2","darkseagreen2")) + scale_color_manual(values = c("paleturquoise4","darkseagreen4")) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid")) + guides(color = FALSE)
+ggplotly(InjuryByStadium, tooltip = "text") %>%
+  layout(title = list(text = paste0('<B>Injuries by Stadium Type</B>',
+                                    '<br>',
+                                    '<sup>',
+                                    'Injuries Happen Outdoors Most Frequently (Unknowns Excluded)',
+                                    '</sup>')))
+``` 
+
+### Frequency By Stadium Type 
+
+``` {r, include = FALSE}
+# How many games are in the dataset?
+length(unique(PlayList$GameID))
+# 5712
+
+# Percentage of Games With An Injury 
+105/5712
+# 1.84%
+
+# How many instances of specific stadium types are there?
+PlayList %>%
+  distinct(GameID, StadiumType, FieldType) %>%
+  count(StadiumType, FieldType)
+  # Outdoors, Natural: 2894
+  # Outdoor, Synthetic: 971
+  # Indoor Closed, Natural: 163
+  # Indoor Closed, Synethic: 1084
+  # Indoor Open, Natural: 109
+  # Indoor Open, Synethic: 92
+
+# Of the injuries, which occurred in which stadiums?
+InjuryRecord %>%
+  count(StadiumType, FieldType)
+  # Outdoors, Natural: 42
+  # Outdoor, Synthetic: 20
+  # Indoor Closed, Natural: 2
+  # Indoor Closed, Synethic: 29
+  # Indoor Open, Natural: 3
+  # Indoor Open, Synethic: 3
+
+
+# Create Data Frame For Bar Chart
+InjuryStadiumTypeComparison <- data.frame("StadiumType" = c("Outdoors","Outdoors","Indoor Closed","Indoor Closed","Indoor Open","Indoor Open"), "Frequency" = c(42/2894,20/971,2/163,29/1084,3/109,3/92), "FieldType" = c("Natural","Synthetic","Natural","Synthetic","Natural","Synthetic"))
+InjuryStadiumTypeComparison <- as.data.frame(InjuryStadiumTypeComparison)
+```
+```{r injury stadium type}
+InjuryStadiumTypeGraph <- ggplot(InjuryStadiumTypeComparison, aes(StadiumType, Frequency, fill=FieldType, color = FieldType, text = paste("<b>Percent of Games with an Injury: </b>", format(Frequency*100,digits = 3),"%"))) + geom_bar(stat = "identity", position = "dodge") + ggtitle("Freqency of NFL Injuries by Stadium Type", subtitle = "Injuries Occur in 1.84% of NFL Games, Up to 2.99% of Games in Indoor Stadiums with Open Roofs") + theme(plot.title = element_text(face="bold")) + geom_hline(yintercept=0.0184, linetype="dashed", color="#993300") + scale_y_continuous(labels=percent) + scale_fill_manual(values = c("paleturquoise2","darkseagreen2")) + scale_color_manual(values = c("paleturquoise4","darkseagreen4")) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid")) + labs(fill = "Field Type",x="Stadium Type") + guides(color=FALSE)
+ggplotly(InjuryStadiumTypeGraph, tooltip = "text") %>%
+  layout(title = list(text = paste0('<B>Frequency of NFL Injuries by Stadium Type</B>',
+                                    '<br>',
+                                    '<sup>',
+                                    'Injuries Occur in 1.84% of NFL Games, Greater in Open Roof Stadiums',
+                                    '</sup>')))
+```
+    
+Again, in each stadium type, the frequency of injury is amplified on synthetic turf. However, taking into consideration both playing surfaces, indoor stadiums with open roofs have the highest frequency of injury. Now, let us go in to the statistical analysis to see if this is mere chance or not. \
+
+``` {r}
+chisq.test(PlayList$Injury, PlayList$StadiumType)
+```
+
+The P-Value of this is again less than 0.05, meaning that the type of stadium the game is played in is in fact statistically significant. Seeing that indoor stadiums with open roofs do have the highest frequency of injury, we are left with the question: *why are we opening the roof?* \
+Now I will run Cramers V to see the correlation.
+
+``` {r}
+CramerV(PlayList$Injury, PlayList$StadiumType)
+```
+The Cramer V is 0.0289792, which is a weaker correlation than playing surface and weather. 
+    
+``` {r remove unneeded data frame four, include = FALSE}
+rm(InjuryStadiumTypeComparison)
+gc()
+```
+``` {r remove unneeded injury record data one, include = FALSE}
+InjuryRecord$DM_M1 <- NULL
+InjuryRecord$DM_M7 <- NULL
+InjuryRecord$DM_M28 <- NULL
+InjuryRecord$DM_M42 <- NULL
+InjuryRecord$Position <- NULL
+InjuryRecord$Surface <- NULL
+```
+## Injuries By Temperature
+
+In games resulting in an injury and games not resulting in an injury, the temperature did not vary much. Games with injuries were slightly warmer on average.
+
+``` {r temperature}
+PlayList %>% 
+  filter(!StadiumType %in% c("Indoor Closed", "Unknown")) %>% 
+  filter(Temperature != -999) %>% 
+  distinct(GameID, Temperature, Injury) %>% 
+  ggplot(aes(y= Temperature, x = Injury, fill = Injury, color = Injury)) + geom_boxplot() +
+  scale_fill_manual(values = c("darkseagreen2","skyblue2")) +
+  scale_color_manual(values = c("darkseagreen4","skyblue4")) +
+  labs(x= "Player Injured?",y="Temperature") +
+    coord_flip() +
+  ggtitle("Injury By Temperature", subtitle = "Temperature Does Not Appear Significant When It Comes To Injury") + theme(plot.title = element_text(face="bold"))
+    ```
+
+``` {r remove unneeded injury record data, include = FALSE}
+InjuryRecord$Temperature <- NULL
+InjuryRecord$PlayerKey <- NULL
+InjuryRecord$GameID <- NULL
+InjuryRecord$BodyPart <- NULL
+InjuryRecord$Weather <- NULL
+InjuryRecord$PlayerDay <- NULL
+InjuryRecord$PlayerGame <- NULL
+InjuryRecord$PlayType <- NULL
+InjuryRecord$PlayerGamePlay <- NULL
+InjuryRecord$StadiumType <- NULL
+PlayList$PlayerKey <- NULL
+PlayList$RosterPosition <- NULL
+PlayList$PlayerDay <- NULL
+PlayList$PlayerGame <- NULL
+PlayList$PositionGroup <- NULL
+PlayerTrackData$dis <- NULL
+```
+``` {r remove unneeded graphs, include = FALSE}
+rm(InjurybyBodyPartDis)
+rm(SurfaceDistribution)
+rm(InjuryCount)
+rm(InjurySurfaceFrequency)
+rm(SurfaceBodyPartInjury)
+rm(SeverityGraph)
+rm(InjurySeverityBodyPart)
+rm(InjurySeveritySurface)
+rm(InjurybyPosition)
+rm(InjurybyBodyPartPosition)
+rm(PlayFrequency)
+rm(InjuryPlaySurface)
+rm(InjuryPlayTypeFrequency)
+rm(GamesInWeather)
+rm(InjuryByWeather)
+rm(InjuryWeatherGraph)
+rm(GamesInStadiumType)
+rm(InjuryByStadium)
+rm(InjuryStadiumTypeGraph)
+```
+    
+# Player Movement Data
+In this part of the analysis, I will take an in-depth look at the interaction between player movement and the type of playing surface in order to uncover its effect on non-contact lower limb injuries.
+``` {r injury, include = FALSE}
+# Add column on if an injury occurred in the play
+PlayerTrackData <- mutate(PlayerTrackData, Injury = ifelse(PlayerTrackData$PlayKey %in% InjuryRecord$PlayKey, "TRUE", "FALSE"))
+```
+
+## Heat Maps 
+
+The following graph is a heat map for all player tracking data in the dataset.
+``` {r all heat map}
+smoothScatter(PlayerTrackData$x,PlayerTrackData$y, xlab = "Sideline (X Coordinate)", ylab= "Endzone (Y Coordinate)")
+```
+
+This shows us a lot of the players are moving up and down the center of the field, which makes sense considering all of the offensive and defensive linemen, quarterback movement in the pocket, rushes up the middle, and inside receivers. \
+
+This next map shows a heat map for all plays in which an injury occurred. 
+``` {r injury heat map}
+smoothScatter(PlayerTrackData$x[which(PlayerTrackData$Injury == "TRUE")], PlayerTrackData$y[which(PlayerTrackData$Injury == "TRUE")], xlab = "Sideline (X Coordinate)", ylab = "Endzone (Y Coordinate)")
+```
+
+This does not really tell us much of anything. There is not as clear of a distinction in colors across the field, but the very darkest colors are still in the middle of the field. \
+
+``` {r remove unneeded ptd variables, include = FALSE}
+PlayerTrackData$x <- NULL
+PlayerTrackData$y <- NULL
+```
+ 
+## Cleaning the Data
+
+The following table shows every event that is included in the Player Tracking dataset.
+``` {r view all events}
+# View All "Events"
+PlayerTrackData %>%
+  count(event) %>%
+  rename(Count = n) %>%
+  mutate(Count = comma(Count)) %>%
+  kableExtra::kable(format = "html", escape = F) %>%
+  kableExtra::kable_styling("striped", full_width = F) %>%
+  kableExtra::scroll_box(height = "500px") %>%
+  kableExtra::kable_styling(fixed_thead = T)
+``` 
+From there, we will create a new variable to determine if the play was part of live play or during a dead ball. For the purposes of this analysis, we do not necessarily need to keep track of the data during dead balls. 
+``` {r, include = FALSE}
+# Events that are live play
+library(dplyr)
+LivePlay <- c("ball_snap", "drop_kick", "extra_point", "extra_point_attempt", "extra_point_blocked", "extra_point_fake", "extra_point_missed","fair_catch","field_goal","field_goal_attempt","field_goal_blocked", "field_goal_fake", "field_goal_missed","field_goal_play","first_contact", "free_kick", "free_kick_play","fumble", "fumble_defense_recovered","fumble_offense_recovered", "handoff", "kick_received","kick_recoverd","kickoff","kickoff_land","kickoff_play","lateral","man_in_motion","onside_kick","pass_arrived","pass_forward","pass_lateral","pass_outcome_caught","pass_outcome_interception","pass_outcome_touchdown","pass_shovel","pass_tipped","play_action","play_submit","punt","punt_blocked","punt_downed","punt_fake","punt_muffed","punt_play","punt_received", "qb_sack","qb_spike","qb_strip_sack","run","run_pass_option","safety","snap_direct","tackle","touchback","touchdown","two_point_conversion","two_point_play","xp_fake")
+``` 
+```{r action acceleration change of direction, warning=FALSE, message=FALSE, echo=TRUE}
+# Create Variable For Live Play versus Dead Ball
+# Fill down event
+    while(length(ind <- which(PlayerTrackData$event == "")) > 0){
+  PlayerTrackData$event[ind] <- PlayerTrackData$event[ind -1]
+}
+
+PlayerTrackData <- PlayerTrackData %>% mutate(Action = ifelse(event %in% LivePlay, "LivePlay", "DeadBall"))
+
+# Join by Play Key
+PlayerTrackData <-  PlayerTrackData %>% filter(Action == "LivePlay")
+invisible(gc())
+    
+PlayerTrackData <- PlayerTrackData %>% left_join(PlayList, by = "PlayKey")
+
+# Remove Play List Data Set
+rm(PlayList)
+    
+# Create variable for Acceleration
+PlayerTrackData$Acceleration <- NA
+PlayerTrackData$Acceleration[-1] <- with(PlayerTrackData, (s[-1]-s[-length(s)])/(time[-1]-time[-length(time)]))
+PlayerTrackData$Acceleration[which(PlayerTrackData$time == 0)] <- NA
+
+# Create variable for Change of Direction
+PlayerTrackData$DirChange <- NA
+PlayerTrackData$DirChange[-1] <- with(PlayerTrackData, dir[-1]-dir[-length(dir)])
+PlayerTrackData$DirChange[which(PlayerTrackData$time == 0)] <- NA
+    # Adjusting for change in direction that would be greater or less than 180 degress ...
+    PlayerTrackData$DirChange[which(PlayerTrackData$DirChange <(-180))] <- PlayerTrackData$DirChange[which(PlayerTrackData$DirChange <(-180))]+360
+    PlayerTrackData$DirChange[which(PlayerTrackData$DirChange >(+180))] <- PlayerTrackData$DirChange[which(PlayerTrackData$DirChange >(+180))]-360
+
+# Create variable for Angle of Run
+PlayerTrackData$Angle <- PlayerTrackData$o - PlayerTrackData$dir
+PlayerTrackData$Angle[which(PlayerTrackData$Angle<(-180))] <- PlayerTrackData$Angle[which(PlayerTrackData$Angle<(-180))]+360
+PlayerTrackData$Angle[which(PlayerTrackData$Angle>(+180))] <- PlayerTrackData$Angle[which(PlayerTrackData$Angle>(+180))] -360
+    
+invisible(gc())    
+```
+
+With the above graphs for direction and orientation, the main, noticeable difference is in the direction of the run. On plays resulting in injury, there are not as many runs in the direction of approximately 180 degrees, but more facing approximately 125 degrees.
+    
+``` {r remove uneeded ptd four, include = FALSE}
+PlayerTrackData$dir <- NULL
+PlayerTrackData$event <- NULL
+PlayerTrackData$o <- NULL
+LivePlay <- NULL
+```
+    
+```{r summary statistics}
+# Create New Data Frame In Order To Continue Our Analysis
+    
+# Create More Summary Statistics
+PlayerTrackData <- 
+    PlayerTrackData %>% group_by(PlayKey) %>%
+    mutate(Average_Speed = mean(s, na.rm = T)) %>%  
+    mutate(Max_Speed = max(s, na.rm = T)) %>% ungroup()
+
+PlayerTrackData$Injury.y <- NULL
+colnames(PlayerTrackData)[4] <- 'Injury'
+
+PlayerTrackData$s <- NULL
+PlayerTrackData$time <- NULL
+PlayerTrackData$Action <- NULL
+PlayerTrackData$StadiumType <- NULL
+PlayerTrackData$Temperature <- NULL
+PlayerTrackData$PlayType <- NULL
+PlayerTrackData$PlayerGamePlay <- NULL
+PlayerTrackData$Position <- NULL
+```    
+
+## Deadly Speed
+> *Some may say you cannot beat speed, but can speed beat you?*
+
+``` {r, include = FALSE}
+# Means By Group
+    # Average Speed, Injury
+tapply(PlayerTrackData$Average_Speed, PlayerTrackData$Injury, mean)
+    # Max Speed, Injury
+tapply(PlayerTrackData$Max_Speed, PlayerTrackData$Injury, mean)
+    # Average Speed, Field Type
+tapply(PlayerTrackData$Average_Speed, PlayerTrackData$FieldType, mean)
+    # Max Speed, Field Type
+tapply(PlayerTrackData$Max_Speed, PlayerTrackData$FieldType, mean)
+```
+The following graphs show the distribution of average speed and maximum speed on any given play, color coded by whether or not an injury occurred on the play.
+``` {r speed distributions, warning = FALSE}
+AverageSpeedDensity <- PlayerTrackData %>% group_by(PlayKey) %>% ggplot(aes(x=Average_Speed, fill = Injury, color = Injury)) + geom_density(alpha = 0.6) + geom_vline(xintercept = mean(PlayerTrackData$Average_Speed),linetype = "dashed", color ="darkred") + ggtitle("Average Speed Distribution",subtitle = "Mean Without Injury: 1.9 y/s, With Injury: 2.12 y/s") + labs(x="Average Speed (Yards Per Second)",y="Density") + theme(plot.title = element_text(face="bold")) + scale_fill_manual(values = c("steelblue2","coral2")) + scale_color_manual(values = c("steelblue4","coral3")) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid"))
+AverageSpeedDensity
+    
+MaxSpeedDensity <- PlayerTrackData %>% group_by(PlayKey) %>% ggplot(aes(x=Max_Speed, fill = Injury, color = Injury)) + geom_density(alpha = 0.6) + geom_vline(xintercept = mean(PlayerTrackData$Max_Speed),linetype = "dashed", color ="darkred") + ggtitle("Maximum Speed on Play Distribution by Injury", subtitle = "Mean Without Injury: 5.06 y/s, With Injury: 6.51 y/s") + theme(plot.title = element_text(face="bold")) + labs(x="Maximum Speed (Yards Per Second)",y="Density") + scale_fill_manual(values = c("steelblue2","coral2")) + scale_color_manual(values = c("steelblue4","coral3")) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid"))
+MaxSpeedDensity
+```
+
+    The above graphs show us that the distribution of average speed when players are not injured is skewed slightly right, but normal. The distribution of average speed when players *are* injured is not normal, but in the same location as the distribution for plays without injuries. \
+    The distribution of maximum speed reached on a play is much more concentrated, as you can see with the smaller tails. Again, the plays without injuries have a somewhat normal distribution, but the plays with injuries does not have a normal distribution. The peaks of the latter group are shifted to the right of the mean, contrasted to the fomer group, which peaks to the left of the mean - meaning that players hit higher maximum speeds on plays where injuries occur. Now, we cannot tell players to slow down so they can avoid an injury, but it is an interesting observation. \
+
+The following graphs will compare average and maximum speed on any given play, but will be color coded by the playing surface. 
+
+``` {r speed playing surface, warning = FALSE}
+AverageSpeedDensityPlaySurf <- PlayerTrackData %>% group_by(PlayKey) %>% ggplot(aes(x=Average_Speed, fill = FieldType, color = FieldType)) + geom_density(alpha = 0.6) + geom_vline(xintercept = mean(PlayerTrackData$Average_Speed),linetype = "dashed", color ="darkred") + ggtitle("Average Speed Distribution by Playing Surface", subtitle = "Mean Natural Grass: 1.89 y/s, Mean Synthetic Turf: 1.92 y/s") + labs(x="Average Speed (Yards Per Second)",y="Density", fill = "Field Type") + theme(plot.title = element_text(face="bold")) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid")) + scale_fill_manual(values=c("paleturquoise2","darkseagreen2")) + scale_color_manual(values=c("paleturquoise4","darkseagreen4")) + guides(color=FALSE)
+AverageSpeedDensityPlaySurf
+
+MaxSpeedDensityPlaySurf <- PlayerTrackData %>% group_by(PlayKey) %>% ggplot(aes(x=Max_Speed, fill = FieldType, color = FieldType)) + geom_density(alpha = 0.6) + geom_vline(xintercept = mean(PlayerTrackData$Max_Speed),linetype = "dashed", color ="darkred") + ggtitle("Maximum Speed on Play Distribution by Playing Surface", subtitle = "Mean Natural Grass: 5.00 y/s, Mean Synthetic Turf: 5.14 y/s") + theme(plot.title = element_text(face="bold")) + labs(x="Maximum Speed (Yards Per Second)",y="Density") + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid")) + scale_fill_manual(values=c("paleturquoise2","darkseagreen2")) + scale_color_manual(values=c("paleturquoise4","darkseagreen4"))
+MaxSpeedDensityPlaySurf
+```
+
+### Statistical Analysis
+
+Theses graphs show that both the average speed during a play and the maximum speed during a play appear somewhat normally distibuted and skewed to the right. They also show us that there is a very small difference between average and maximum speeds on both playing surfaces. Seeing a .03 and .13 yards per second difference does not seem like much, but as we know, every step ahead of your opponent that you are makes a difference. Now, I will run an Independent T-Test to see if this is a statistically significant difference of if it is occurring by chance. Since the sample size in our dataset is so large, I am not going to bother running a test for normality due to the Central Limit Theorum. Also, though the sample size is so large, I am still going to be using a T-Test, as mentioned, due to the fact that the population standard deviation is unknown - this dataset is just a sample of the larger NFL. \
+
+``` {r, include = FALSE}
+library(car)
+```
+``` {r average t test, warning = FALSE}
+# Levene's Test for Homogeniety of Variance
+leveneTest(PlayerTrackData$Average_Speed, PlayerTrackData$FieldType, center = mean)
+# With a P-Value less than 0.05, I am accepting that there are significant differences in variance between the two groups, so I will not adjust the T-Test for equal variances.
+t.test(PlayerTrackData$Average_Speed ~ PlayerTrackData$FieldType)
+# With a P-Value less than 0.05, we reject the null hypothesis that there is no significant difference between means of the two groups.
+```
+
+The T-Test for Average Speed returned a P-Value of less than 0.05, so I am rejecting the null hypothesis that there is not a significant difference between the means of the two groups. With 95% confidence, I can conclude that the maximum difference between these means is between -0.033 and -0.031. This means that we cannot rule out that the .03 yards per second difference between the two groups is attributed to the playing surface. In laymans terms, players have a faster average speed on synthetic turf. \
+
+``` {r max t test, warning = FALSE}
+# Levene's Test for Homogeniety of Variance
+leveneTest(PlayerTrackData$Max_Speed, PlayerTrackData$FieldType, center = mean)
+# With a P-Value less than 0.05, we are not assuming homogeniety of variance. 
+t.test(PlayerTrackData$Max_Speed ~ PlayerTrackData$FieldType)
+# With a P-Value less than 0.05, we reject the null hypothesis that there is no significant difference between means of the two groups.
+```
+
+The T-Test for Maximum Speed returned a P-Value of less than 0.05, so I am again rejecting the null hypothesis that there is not a significant difference between the means of the two groups. With 95% confidence, I can conclude that the maximum difference between these means is between -0.131 and -0.129. This means that we cannot rule out that the .13 yards per second difference betwen the two groups is attributed to the playing surface. In laymans terms, players reach a greater maximum speed per play on synthetic turf. \
+
+``` {r remove unneeded ptd three, include = FALSE}
+PlayerTrackData$StadiumType <- NULL
+PlayerTrackData$Action <- NULL
+PlayerTrackData$Temperature <- NULL
+PlayerTrackData$Weather <- NULL
+PlayerTrackData$PlayerGamePlay <- NULL
+PlayerTrackData$Position <- NULL
+```
+ ## Acceleration
+    
+Speed, though, might not give us as much insight as some other metrics, such as acceleration and directional change (cutting). I creted new columns for these metrics before turning the Player Tracking Data into the summary dataset that only includes live play. The following graphs will show the distribution of the metrics based upon whether or not an injury occurred. 
+``` {r acceleration change of direction distribution, warning = FALSE}
+AccelerationDensity <- PlayerTrackData %>% ggplot(aes(x=Acceleration, fill=Injury, color=Injury)) + geom_density(alpha = 0.6) + geom_vline(xintercept = mean(PlayerTrackData$Acceleration),linetype="dashed",color="darkred") + ggtitle("Distribution of Acceleration by Injuries/Non-Injuries") + labs(x="Acceleration (Yards Per Second Per Second)",y="Density") + theme(plot.title = element_text(face="bold")) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid")) + scale_fill_manual(values = c("steelblue2","coral2")) + scale_color_manual(values = c("steelblue4","coral3"))
+AccelerationDensity
+    
+DirChangeDensity <- PlayerTrackData %>% ggplot(aes(x=DirChange, fill=Injury, color=Injury)) + geom_density(alpha = 0.6) + geom_vline(xintercept = mean(PlayerTrackData$DirChange),linetype="dashed",color="darkred") + ggtitle("Distribution of Directional Change by Injuries/Non-Injuries") + labs(x="Directional Change (Degrees)",y="Density") + theme(plot.title = element_text(face="bold")) + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid")) + scale_fill_manual(values = c("steelblue2","coral2")) + scale_color_manual(values = c("steelblue4","coral3"))
+DirChangeDensity
+```
+
+The distribution of acceleration and directional change is not different between plays resulting in injuries and plays not resulting in injuries. However, this data would be *much* more useful if we knew at what time of the play the injury occurred. If so, we could isolate the acceleration and change of direction at the time of the injury. I believe this is something worth looking in to, and I would have had I had the resources. 
+
+### Statistical Analysis
+
+Let us take a closer look to determine if these more dynamic metrics vary based on the playing surface.
+``` {r acceleration change of direction playing surface, warning = FALSE}
+AccelerationPlaySurf <- PlayerTrackData %>% ggplot(aes(x=Acceleration, fill=FieldType, color=FieldType)) + geom_density(alpha = 0.6) + geom_vline(xintercept = mean(PlayerTrackData$Acceleration),linetype="dashed",color="darkred") + ggtitle("Distribution of Acceleration by Playing Surface") + labs(x="Acceleration (Yards Per Second Per Second)",y="Density") + theme(plot.title = element_text(face="bold")) + facet_wrap( ~ FieldType) + guides(color="none") + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid")) + scale_fill_manual(values=c("paleturquoise2","darkseagreen2")) + scale_color_manual(values=c("paleturquoise4","darkseagreen4"))
+AccelerationPlaySurf
+    
+DirChangePlaySurf <- PlayerTrackData %>% ggplot(aes(x=DirChange, fill=FieldType, color=FieldType)) + geom_density(alpha = 0.6) + geom_vline(xintercept = mean(PlayerTrackData$DirChange),linetype="dashed",color="darkred") + ggtitle("Distribution of Directional Change by Playing Surface") + labs(x="Directional Change (Degrees)",y="Density")  + theme(plot.title = element_text(face="bold")) + facet_wrap( ~ FieldType) + guides(color="none") + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid")) + scale_fill_manual(values=c("paleturquoise2","darkseagreen2")) + scale_color_manual(values=c("paleturquoise4","darkseagreen4"))
+DirChangePlaySurf
+```
+
+``` {r tapply for acceleration and dirchange, warning = FALSE, include = FALSE}
+tapply(PlayerTrackData$Acceleration, PlayerTrackData$FieldType, mean, na.rm = TRUE)
+# Natural : 0.105 yards per second per second
+# Synthetic: 0.109 yards per second per second
+tapply(PlayerTrackData$DirChange, PlayerTrackData$FieldType, mean, na.rm = TRUE)
+# Natural: .004
+# Synthetic: .005
+```   
+The distribution of acceleration and directional change does not seem to vary by playing surface either : 0.004 for acceleration and 0.001 for directional change. \
+
+Since the directional change is so minute, I am not going to run a T-Test for this variable. For acceleration, I am going to follow the same sequence of tests that I did for average speed and maximum speed.
+
+``` {r t test acceleration, warning = FALSE}
+# Homoegeniety of Variance
+# The Levene Test for this set of variables was not working in my Kaggle Kernel, however it was running in my RStudio software. The P-Value was less than 0.05.
+# Again, homogeniety of variance is not assumed. 
+# The T-Test was also not running in this version of R on Kaggle, but ran just fine in my RStudio software. The P-Value returned p-value = 1.748e-10.
+# P-Value is less than 0.05, so the difference in means is signficant. 95% confident that the maximum difference between means is between -0.004 and -0.002.
+```
+
+The T-Test for Acceleration returned a P-Value of less than 0.05, so I am again rejecting the null hypothesis that there is not a significant difference between the means of the two groups. With 95% confidence, I can conclude that the maximum difference between these means is between -0.004 and -0.002. This means that we cannot rule out that the difference in acceleration betwen the two groups is attributed to the playing surface. In laymans terms, players accleration more rapidly on synthetic turf. \
+
+## Angle of the Run
+
+Another metric to look at now is the interaction between the player orientation (direction he is facing) and the direction he is running. To do this, I took the difference between the orientation variable and the direction variable. I only want this to be on a scale from -180 to +180, with negative numbers representing the player facing left, and positive numbers representing the player facing right. \
+    
+``` {r angle, warning = FALSE}
+AngleInjury <- PlayerTrackData %>% ggplot(aes(x=Angle, fill=Injury, color=Injury)) + geom_density(alpha = 0.6) + geom_vline(xintercept = mean(PlayerTrackData$Angle), linetype = "dashed",color="darkred") + ggtitle("Distribution of Angle of Player Movement by Injury") + labs(x="Angle (Degrees)",y="Density") + theme(plot.title = element_text(face="bold")) + guides(color="none") + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid")) + scale_fill_manual(values = c("steelblue2","coral2")) + scale_color_manual(values = c("steelblue4","coral3"))
+AngleInjury
+
+AnglePlaySurf <- PlayerTrackData %>% ggplot(aes(x=Angle, fill=FieldType, color=FieldType)) + geom_density(alpha = 0.6) + geom_vline(xintercept = mean(PlayerTrackData$Angle), linetype = "dashed",color="darkred") + ggtitle("Distribution of Angle of Player Movement by Field Type") + labs(x="Angle (Degrees)",y="Density") + theme(plot.title = element_text(face="bold")) + guides(color="none") + theme(legend.background = element_rect(color="#666666", fill = 'white', linetype = "solid")) + scale_fill_manual(values=c("paleturquoise2","darkseagreen2")) + scale_color_manual(values=c("paleturquoise4","darkseagreen4"))
+AnglePlaySurf
+```
+``` {r remove unneeded ptd, include = FALSE}
+PlayerTrackData$DirChange <- NULL
+PlayerTrackData$Acceleration <- NULL
+PlayerTrackData$Injury <- NULL
+PlayerTrackData$FieldType <- NULL
+```
+
+It does not appear that the distribution varies between plays without injuries and plays with injuries - in both scenarios players are facing left while running much more often than they are facing right. Again, this part of the anaysis would be much better if the time of injury during the play was known in order to isolate the angle of the run at the time of the injury. The distribution is also basically the same regardless of the playing surface. Since the distributions for playing surface basically lay on top of each other, I will not be running a statistical analysis for it. \
+
+## Severity 
+
+One last factor I want to throw in to the player movement analysis is the severity of the injury, which, as previously discussed, is measured in this scenario by days missed due to the injury. Once again, it would be much more beneficial if the time of the play the injury occurred was known. However, that is not known in the given datasets - so the following graphs include information from the entire play the injury occurred on. 
+
+``` {r severity factor, warning = FALSE}
+InjuryRecord <- merge(x = InjuryRecord, y = PlayerTrackData[,c("PlayKey","Average_Speed","Angle")], by= c("PlayKey") , all.x = TRUE)
+
+DaysMissedAverageSpeedSurface <- ggplot(InjuryRecord,aes(x = severity,y = Average_Speed,color = FieldType, fill= FieldType, alpha= 0.6)) + 
+  geom_violin() +
+  ggtitle("Severity by Average Speed and Field Type") + guides(alpha = "none") + labs(x="Days Missed",y="Average Speed on Play (Yards Per Second)") + scale_fill_manual(values=c("paleturquoise2","darkseagreen2")) + scale_color_manual(values=c("paleturquoise4","darkseagreen4"))
+DaysMissedAverageSpeedSurface
+
+DaysMissedAngleChange <- ggplot(InjuryRecord,aes(x = severity,y = Angle,color = FieldType, fill= FieldType, alpha= 0.6)) + 
+  geom_violin() +
+  ggtitle("Severity by Change of Direction and Field Type") + guides(alpha = "none") + labs(x="Days Missed",y="Directional Change (Degrees)") + scale_fill_manual(values=c("paleturquoise2","darkseagreen2")) + scale_color_manual(values=c("paleturquoise4","darkseagreen4"))
+DaysMissedAngleChange
+```
+
+Again, these graphs are not necessarily useful with the data available, but if we had these metrics (and Acceleration and Change of Direction - not included because the graphs with the given data were even more useless) for the exact time of injury, we would be able to see at what acceleration, speed, and degree the most injuries occurred during for each type of playing surface, split up by severity of injury. I am leaving these graphs in this report, though, to show how I would suggest visualizing that data. \
+
+# Conclusion
+
+To summarize my findings:
+    
+- Of every factor that affects injuries, the effects are amplified when placed on synthetic turf (An exception to this is punt plays, which was noted in the Injury By Play Type secton). Again, I believe there would be a decrease in non-contact lower limb injuries if all stadiums that could support it were required to have natural grass. \
+
+- Injuries tend to occur earlier in games on both natural and synthetic turf. I am not sure why this is, but some hypotheses I have are that players have more energy and are playing harder with more intense movements earlier in the game (I analyzed this in my Player Movement Patterns notebook and uncovered that the average speed on each play is generally faster earlier in the game) or that players are not aware of how their cleats interact with the playing surface for that game.
+
+- Indoor stadiums with open roofs have the highest frequency of injury ... close the roof!
+
+- Although average speed and maximum speed differ on plays that result in injury and plays that do not, those metrics do not differ across playing surfaces.
+
+- Athletes accelerate quicker on synthetic turf, however, due to not having the time of play the injury occurred, there is not a useful analysis to be run for the acceleration at time of injury. The cloest metric that could be derived is average acceleration over the course of the play, which would encompass stopping, starting , slowing down, and speeding up, and therefore would not prove useful. 
